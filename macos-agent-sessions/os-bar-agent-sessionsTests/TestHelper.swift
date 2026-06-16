@@ -12,6 +12,23 @@ import Network
 
 // MARK: - Models mirroring production types
 
+/// Mirrors production NotifyLogEntry.CommandLogDetails.
+struct CommandLogDetails: Codable {
+    let command: String
+    let exitCode: Int32
+    let stdout: String
+    let stderr: String
+    let durationMs: Int
+}
+
+/// Mirrors production NotifyLogEntry (minimal fields needed for testing).
+struct TestNotifyLogEntry: Codable {
+    let timestamp: Date
+    let dir: String
+    let event: String?
+    var command: CommandLogDetails? = nil
+}
+
 struct SessionEvent: Codable, Equatable {
     let id: UUID
     let dir: String
@@ -116,6 +133,14 @@ struct Request: Codable {
     let http_path: String?
     let http_body: String?
     let content_type: String?
+    // --- command-log test fields ---
+    let log_dir: String?
+    let log_event: String?
+    let log_command: String?
+    let log_exit_code: Int?
+    let log_stdout: String?
+    let log_stderr: String?
+    let log_duration_ms: Int?
 }
 
 // MARK: - JSON Response to test framework
@@ -135,6 +160,7 @@ struct Response: Codable {
     var http_body: String = ""
     var relative_time: String = ""
     var error: String = ""
+    var log_entry_json: String = ""
 }
 
 // MARK: - ISO8601 Date Helpers
@@ -540,6 +566,80 @@ func runHelper() -> Never {
         } else {
             response.error = "missing events_json for unconsumed_count"
         }
+
+    case "log_command_roundtrip":
+        guard let dir = request.log_dir,
+              let cmd = request.log_command else {
+            response.error = "missing log_dir or log_command for log_command_roundtrip"
+            break
+        }
+
+        let details = CommandLogDetails(
+            command: cmd,
+            exitCode: Int32(request.log_exit_code ?? 0),
+            stdout: request.log_stdout ?? "",
+            stderr: request.log_stderr ?? "",
+            durationMs: request.log_duration_ms ?? 0
+        )
+        let entry = TestNotifyLogEntry(
+            timestamp: Date(),
+            dir: dir,
+            event: request.log_event,
+            command: details
+        )
+
+        // Encode → verify JSON contains "command" key
+        guard let encoded = try? makeJSONEncoder().encode(entry),
+              let jsonStr = String(data: encoded, encoding: .utf8) else {
+            response.error = "failed to encode log entry"
+            break
+        }
+        if !jsonStr.contains("\"command\"") {
+            response.error = "encoded JSON missing 'command' key"
+            break
+        }
+
+        // Decode → verify round-trip
+        guard let decoded = try? makeJSONDecoder().decode(TestNotifyLogEntry.self, from: encoded) else {
+            response.error = "failed to decode log entry"
+            break
+        }
+        guard let cmdDecoded = decoded.command else {
+            response.error = "command field nil after round-trip"
+            break
+        }
+
+        // Return decoded values via response fields for comparison
+        response.log_entry_json = jsonStr
+        response.http_status = Int(cmdDecoded.exitCode)
+        response.http_body = cmdDecoded.stdout
+        response.relative_time = cmdDecoded.stderr
+        response.count = cmdDecoded.durationMs
+        response.unconsumed_count = 1 // success indicator
+
+    case "log_command_null_omit":
+        guard let dir = request.log_dir else {
+            response.error = "missing log_dir for log_command_null_omit"
+            break
+        }
+
+        // Verify: entry *without* command must not serialize "command" key
+        let entryNoCmd = TestNotifyLogEntry(
+            timestamp: Date(),
+            dir: dir,
+            event: request.log_event
+        )
+        guard let encNoCmd = try? makeJSONEncoder().encode(entryNoCmd),
+              let strNoCmd = String(data: encNoCmd, encoding: .utf8) else {
+            response.error = "failed to encode null-omission entry"
+            break
+        }
+        if strNoCmd.contains("\"command\"") {
+            response.error = "entry without command must not serialize 'command' key"
+            break
+        }
+        response.unconsumed_count = 1 // success indicator
+        response.log_entry_json = strNoCmd
 
     default:
         response.error = "unknown action: \(request.action)"

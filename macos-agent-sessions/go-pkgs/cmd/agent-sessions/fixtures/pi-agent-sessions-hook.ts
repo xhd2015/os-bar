@@ -8,6 +8,7 @@ export default function (pi: ExtensionAPI) {
     const sessionName = ctx.sessionManager.getSessionName()
 
     const payload = JSON.stringify({
+      source: "notify",
       event: "session.finished",
       dir: cwd,
       pi: {

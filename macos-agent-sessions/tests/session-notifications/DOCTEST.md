@@ -65,6 +65,14 @@ session-notifications/                   ROOT: Request{Action, Dir, ...}, Respon
 │           ├── SETUP → timestamp 2h ago
 │           ├── ASSERT → relative_time = "2h ago"
 │
+├── command-log-serialize/           LEAF: encode→decode round-trip
+│   ├── SETUP → log_command_test with all fields set
+│   ├── ASSERT → decoded values match originals, JSON has "command" key
+│
+├── command-log-null-omission/       LEAF: nil command omits JSON key
+│   ├── SETUP → log_command_test without command fields
+│   ├── ASSERT → JSON does NOT contain "command" key
+│
 └── server/                              DECISION: component = server
     └── [SETUP] req.Action ∈ server actions
     │
@@ -115,6 +123,8 @@ session-notifications/                   ROOT: Request{Action, Dir, ...}, Respon
 | 16 | `store/consumed-dedup/` | Dedup re-marks event as unconsumed |
 | 17 | `store/consumed-mark/` | `markConsumed` sets `consumed = true` |
 | 18 | `store/unconsumed-count/` | Mixed consumed/unconsumed → correct count |
+| 19 | `store/command-log-serialize/` | Encode→decode round-trip with command fields survived |
+| 20 | `store/command-log-null-omission/` | Nil command omits `"command"` JSON key |
 
 ## Coverage Map
 
@@ -138,6 +148,8 @@ session-notifications/                   ROOT: Request{Action, Dir, ...}, Respon
 | Dedup resets consumed | `consumed-dedup` | ✓ |
 | Mark consumed flips flag | `consumed-mark` | ✓ |
 | Unconsumed count with mixed events | `unconsumed-count` | ✓ |
+| Command log encode→decode round-trip | `command-log-serialize` | ✓ |
+| Command log nil omission from JSON | `command-log-null-omission` | ✓ |
 
 ## How to Run
 

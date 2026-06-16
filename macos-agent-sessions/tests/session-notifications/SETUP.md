@@ -19,6 +19,8 @@
 - Action `"unconsumed_count"` loads events from `events_json` and returns the count of events where `consumed == false`.
 - Action `"relative_time"` accepts `timestamp_iso` and `reference_iso` (optional; defaults to current time) and returns the formatted relative time string.
 - Action `"server_post"` starts an ephemeral HTTP server, sends an HTTP request with specified method/path/body/headers, and returns the HTTP status, body, and the store's events.
+- Action `"log_command_roundtrip"` encodes a `TestNotifyLogEntry` with `CommandLogDetails` to JSON, decodes it, and returns decoded values via response fields.
+- Action `"log_command_null_omit"` encodes a `TestNotifyLogEntry` *without* a command and verifies the `"command"` JSON key is absent.
 - All timestamps in events are ISO8601 strings (`"2006-01-02T15:04:05Z"`).
 - The test helper uses an ephemeral port for server tests (not 38271) to avoid conflicts.
 - `DOCTEST_ROOT` refers to the directory of this SETUP.md file.
@@ -29,6 +31,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -52,6 +55,14 @@ type Request struct {
 	HTTPPath      string   `json:"http_path,omitempty"`
 	HTTPBody      string   `json:"http_body,omitempty"`
 	ContentType   string   `json:"content_type,omitempty"`
+	// --- command-log test fields ---
+	LogDir        string   `json:"log_dir,omitempty"`
+	LogEvent      string   `json:"log_event,omitempty"`
+	LogCommand    string   `json:"log_command,omitempty"`
+	LogExitCode   int      `json:"log_exit_code,omitempty"`
+	LogStdout     string   `json:"log_stdout,omitempty"`
+	LogStderr     string   `json:"log_stderr,omitempty"`
+	LogDurationMs int      `json:"log_duration_ms,omitempty"`
 }
 
 // Response is parsed from the Swift test helper's stdout.
@@ -63,6 +74,7 @@ type Response struct {
 	HTTPBody        string         `json:"http_body"`
 	RelativeTime    string         `json:"relative_time"`
 	Error           string         `json:"error"`
+	LogEntryJSON    string         `json:"log_entry_json"`
 }
 
 func Run(t *testing.T, req *Request) (*Response, error) {

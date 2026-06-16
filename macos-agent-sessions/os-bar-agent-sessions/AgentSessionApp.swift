@@ -5,6 +5,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     weak var store: SessionStore?
     var server: SessionServer?
 
+    /// Tracks how many dir-open operations are in-flight so the loading cursor
+    /// stays pushed until all complete (or their 3s timeouts expire).
+    private var cursorPushCount = 0
+    private var loadingCursor: NSCursor?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let store = store else { return }
         let srv = SessionServer(store: store)
@@ -20,6 +25,118 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             alert.addButton(withTitle: "Exit")
             alert.runModal()
             NSApplication.shared.terminate(nil)
+        }
+    }
+
+    // MARK: - Open Directory
+
+    /// Launch `/usr/local/bin/code <dir>`, show a loading cursor while running
+    /// (auto-dismiss after 3 s), and log exit code / stdout / stderr.
+    func openDir(_ dir: String) {
+        pushLoadingCursor()
+
+        let startTime = Date()
+        let process = Process()
+        process.launchPath = "/usr/local/bin/code"
+        process.arguments = [dir]
+
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        var stdoutData = Data()
+        var stderrData = Data()
+
+        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if !data.isEmpty { stdoutData.append(data) }
+        }
+        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if !data.isEmpty { stderrData.append(data) }
+        }
+
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+
+        let timeoutWork = DispatchWorkItem { [weak self] in
+            self?.popLoadingCursor()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: timeoutWork)
+
+        process.terminationHandler = { [weak self] proc in
+            let durationMs = Int(Date().timeIntervalSince(startTime) * 1000)
+            let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
+            let stderr = String(data: stderrData, encoding: .utf8) ?? ""
+
+            DispatchQueue.main.async {
+                timeoutWork.cancel()
+                self?.popLoadingCursor()
+
+                let entry = NotifyLogEntry(
+                    source: "log",
+                    timestamp: Date(),
+                    dir: dir,
+                    event: "command.executed",
+                    pi: nil,
+                    opencode: nil,
+                    command: NotifyLogEntry.CommandLogDetails(
+                        command: "/usr/local/bin/code \(dir)",
+                        exitCode: proc.terminationStatus,
+                        stdout: stdout.trimmingCharacters(in: .whitespacesAndNewlines),
+                        stderr: stderr.trimmingCharacters(in: .whitespacesAndNewlines),
+                        durationMs: durationMs
+                    )
+                )
+                NotifyLogStore.shared.append(entry)
+            }
+        }
+
+        do {
+            try process.run()
+        } catch {
+            DispatchQueue.main.async { [weak self] in
+                timeoutWork.cancel()
+                self?.popLoadingCursor()
+
+                let entry = NotifyLogEntry(
+                    source: "log",
+                    timestamp: Date(),
+                    dir: dir,
+                    event: "command.error",
+                    pi: nil,
+                    opencode: nil,
+                    command: NotifyLogEntry.CommandLogDetails(
+                        command: "/usr/local/bin/code \(dir)",
+                        exitCode: -1,
+                        stdout: "",
+                        stderr: "failed to launch: \(error.localizedDescription)",
+                        durationMs: 0
+                    )
+                )
+                NotifyLogStore.shared.append(entry)
+            }
+        }
+    }
+
+    // MARK: - Loading Cursor
+
+    private func pushLoadingCursor() {
+        if cursorPushCount == 0 {
+            if loadingCursor == nil {
+                guard let img = NSImage(systemSymbolName: "hourglass", accessibilityDescription: "Loading") else { return }
+                let config = NSImage.SymbolConfiguration(pointSize: 18, weight: .regular)
+                guard let configured = img.withSymbolConfiguration(config) else { return }
+                loadingCursor = NSCursor(image: configured, hotSpot: NSPoint(x: 0, y: 0))
+            }
+            loadingCursor?.push()
+        }
+        cursorPushCount += 1
+    }
+
+    private func popLoadingCursor() {
+        guard cursorPushCount > 0 else { return }
+        cursorPushCount -= 1
+        if cursorPushCount == 0 {
+            NSCursor.pop()
         }
     }
 }
@@ -102,8 +219,10 @@ struct AgentSessionApp: App {
             HStack(spacing: 2) {
                 Image(systemName: store.unconsumedCount > 0 ? "bell.badge" : "bell")
                     .imageScale(.small)
-                Text("\(store.unconsumedCount)")
-                    .font(.system(size: 11))
+                if store.unconsumedCount > 0 {
+                    Text("\(store.unconsumedCount)")
+                        .font(.system(size: 11))
+                }
             }
             .fixedSize()
         }
@@ -117,9 +236,6 @@ struct AgentSessionApp: App {
     }
 
     private func openInCode(_ dir: String) {
-        let task = Process()
-        task.launchPath = "/usr/bin/env"
-        task.arguments = ["code", dir]
-        task.launch()
+        appDelegate.openDir(dir)
     }
 }

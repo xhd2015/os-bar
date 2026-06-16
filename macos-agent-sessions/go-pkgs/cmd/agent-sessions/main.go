@@ -447,11 +447,13 @@ Flags:
 // --- logs subcommand ---
 
 type notifyLogEntry struct {
-	Timestamp string                    `json:"timestamp"`
-	Dir       string                    `json:"dir"`
-	Event     string                    `json:"event,omitempty"`
-	Pi        *piLogDetails             `json:"pi,omitempty"`
-	Opencode  *opencodeLogDetails       `json:"opencode,omitempty"`
+	Source    string              `json:"source"`
+	Timestamp string              `json:"timestamp"`
+	Dir       string              `json:"dir"`
+	Event     string              `json:"event,omitempty"`
+	Pi        *piLogDetails       `json:"pi,omitempty"`
+	Opencode  *opencodeLogDetails `json:"opencode,omitempty"`
+	Command   *commandLogDetails  `json:"command,omitempty"`
 }
 
 type piLogDetails struct {
@@ -463,6 +465,14 @@ type piLogDetails struct {
 type opencodeLogDetails struct {
 	SessionID   string `json:"sessionId,omitempty"`
 	NativeEvent string `json:"nativeEvent,omitempty"`
+}
+
+type commandLogDetails struct {
+	Command    string `json:"command"`
+	ExitCode   int    `json:"exitCode"`
+	Stdout     string `json:"stdout"`
+	Stderr     string `json:"stderr"`
+	DurationMs int    `json:"durationMs"`
 }
 
 func cmdLogs(args []string) {
@@ -565,6 +575,27 @@ Flags:
 		if len(details) > 0 {
 			for _, d := range details {
 				fmt.Printf("        %s\n", d)
+			}
+		}
+
+		// Show command execution result
+		if c := e.Command; c != nil {
+			suffix := ""
+			if c.ExitCode < 0 {
+				suffix = " (launch failed)"
+			} else if c.ExitCode != 0 {
+				suffix = fmt.Sprintf(" (exit=%d)", c.ExitCode)
+			}
+			fmt.Printf("        cmd=%s [%d ms]%s\n", c.Command, c.DurationMs, suffix)
+			if c.Stderr != "" {
+				for _, line := range strings.Split(strings.TrimRight(c.Stderr, "\n"), "\n") {
+					fmt.Printf("        stderr: %s\n", line)
+				}
+			}
+			if c.Stdout != "" {
+				for _, line := range strings.Split(strings.TrimRight(c.Stdout, "\n"), "\n") {
+					fmt.Printf("        stdout: %s\n", line)
+				}
 			}
 		}
 	}

@@ -50,6 +50,7 @@ export default {
         const sessionId = (event.properties as { sessionID?: string })?.sessionID ?? undefined
 
         const payload = JSON.stringify({
+          source: "notify",
           event: "session.finished",
           dir,
           opencode: {

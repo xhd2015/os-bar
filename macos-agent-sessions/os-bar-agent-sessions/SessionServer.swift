@@ -5,7 +5,7 @@ import AppKit
 class SessionServer {
     private var listener: NWListener?
     private let store: SessionStore
-    private let logStore = NotifyLogStore()
+    private let logStore = NotifyLogStore.shared
     private let port: UInt16
 
     init(store: SessionStore, port: UInt16 = 38271) {
@@ -212,8 +212,12 @@ class SessionServer {
             )
         }
 
+        // Determine source: "notify" → menu bar item, anything else → log-only
+        let source = json["source"] as? String ?? ""
+
         // Log the notification
         let logEntry = NotifyLogEntry(
+            source: source,
             timestamp: Date(),
             dir: dir,
             event: json["event"] as? String,
@@ -222,9 +226,11 @@ class SessionServer {
         )
         logStore.append(logEntry)
 
-        // Store event
-        DispatchQueue.main.async { [weak self] in
-            self?.store.addEvent(dir: dir)
+        // Only push to menu bar for explicit notify-source entries
+        if source == "notify" {
+            DispatchQueue.main.async { [weak self] in
+                self?.store.addEvent(dir: dir)
+            }
         }
 
         return httpResponse(status: 200, body: "{\"ok\":true}")
