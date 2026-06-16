@@ -1,4 +1,5 @@
 import SwiftUI
+import ServiceManagement
 
 enum BarMetric: String, CaseIterable {
     case cpu
@@ -9,6 +10,14 @@ enum BarMetric: String, CaseIterable {
 struct os_barApp: App {
     @StateObject private var monitor = SystemMonitor()
     @AppStorage("barMetric") private var barMetric: BarMetric = .cpu
+    @AppStorage("autoStart") private var autoStart = false
+
+    init() {
+        // Sync toggle with actual system state
+        if #available(macOS 13.0, *) {
+            _autoStart.wrappedValue = SMAppService.mainApp.status == .enabled
+        }
+    }
 
     var body: some Scene {
         MenuBarExtra {
@@ -23,6 +32,24 @@ struct os_barApp: App {
                     Text("Memory").tag(BarMetric.mem)
                 }
                 .pickerStyle(.inline)
+
+                Divider()
+
+                Toggle("Auto Start", isOn: $autoStart)
+                    .onChange(of: autoStart) { enabled in
+                        if #available(macOS 13.0, *) {
+                            do {
+                                if enabled {
+                                    try SMAppService.mainApp.register()
+                                } else {
+                                    try SMAppService.mainApp.unregister()
+                                }
+                            } catch {
+                                print("Auto Start toggle failed: \(error)")
+                                autoStart = !enabled
+                            }
+                        }
+                    }
 
                 Divider()
 

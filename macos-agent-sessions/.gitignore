@@ -1,0 +1,15 @@
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Xcode
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+
+# macOS
+.DS_Store
+
+# App bundle and archive
+os-bar-agent-sessions.app/
+os-bar-agent-sessions.dmg
+os-bar-agent-sessions.zip
