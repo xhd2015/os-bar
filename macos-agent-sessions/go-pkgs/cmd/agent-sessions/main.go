@@ -16,11 +16,20 @@ import (
 	lessflags "github.com/xhd2015/less-flags"
 )
 
-//go:embed fixtures/pi-agent-sessions-hook.ts
+//go:embed scripts/pi-agent-sessions-hook.ts
 var piExtension []byte
 
-//go:embed fixtures/opencode-agent-sessions-plugin.ts
+//go:embed scripts/opencode-agent-sessions-plugin.ts
 var opencodePlugin []byte
+
+//go:embed scripts/agent-sessions-stop.sh
+var hookScript []byte
+
+//go:embed scripts/grok-agent-sessions-hooks.json
+var grokHooksJSON []byte
+
+//go:embed scripts/codex-agent-sessions-hooks.json
+var codexHooksJSON []byte
 
 const (
 	defaultPort = 38271
@@ -613,27 +622,35 @@ func truncateStr(s string, max int) string {
 func cmdInstall(args []string) {
 	var showPi bool
 	var showOpencode bool
+	var showGrok bool
+	var showCodex bool
 	var dryRun bool
 	var global bool
 
 	helpText := `Usage: agent-sessions install [flags]
 
-Install or update integration scripts for pi and opencode.
-Checks whether the fixture script is already installed and compares content.
+Install or update integration scripts for pi, opencode, grok, and codex.
+Checks whether the bundled script is already installed and compares content.
 
 Flags:
   --pi            install/check pi extension
   --opencode      install/check opencode plugin
+  --grok          install/check grok Stop notification hook
+  --codex         install/check codex Stop notification hook
   --dry-run       check status only, do not write files
   --global        install to global dir
                   pi: ~/.pi/agent/extensions/
                   opencode: ~/.config/opencode/plugins/
+                  grok: ~/.grok/hooks/
+                  codex: ~/.codex/
                   default: project-local
   -h, --help      show help
 `
 
 	_, err := lessflags.Bool("--pi", &showPi).
 		Bool("--opencode", &showOpencode).
+		Bool("--grok", &showGrok).
+		Bool("--codex", &showCodex).
 		Bool("--dry-run", &dryRun).
 		Bool("--global", &global).
 		Help("-h,--help", helpText).
@@ -644,8 +661,8 @@ Flags:
 		os.Exit(1)
 	}
 
-	if !showPi && !showOpencode {
-		fmt.Fprintf(os.Stderr, "error: at least one of --pi or --opencode is required\n")
+	if !showPi && !showOpencode && !showGrok && !showCodex {
+		fmt.Fprintf(os.Stderr, "error: at least one of --pi, --opencode, --grok, or --codex is required\n")
 		os.Exit(1)
 	}
 
@@ -669,20 +686,29 @@ Flags:
 		} else {
 			targetPath = filepath.Join(cwd, ".opencode", "plugins", "agent-sessions.ts")
 		}
-		if checkAndWrite("opencode plugin", targetPath, opencodePlugin, dryRun) && !dryRun {
+		written := checkAndWrite("opencode plugin", targetPath, opencodePlugin, dryRun)
+		if written && !dryRun && global {
 			fmt.Println()
 			fmt.Println("  To enable, run this inside opencode:")
 			fmt.Printf("    /config add plugin file://%s\n", targetPath)
 		}
 	}
+
+	if showGrok {
+		installGrok(global, homeDir, cwd, dryRun)
+	}
+
+	if showCodex {
+		installCodex(global, homeDir, cwd, dryRun)
+	}
 }
 
-func checkAndWrite(label string, targetPath string, fixture []byte, dryRun bool) (written bool) {
+func checkAndWrite(label string, targetPath string, script []byte, dryRun bool) (written bool) {
 	dir := filepath.Dir(targetPath)
 
-	// Determine file mode: wrappers need execute bit, extensions are plain text
+	// Shell scripts and bin/ wrappers need the execute bit.
 	perm := os.FileMode(0644)
-	if strings.HasSuffix(targetPath, ".sh") || strings.Contains(targetPath, "/bin/") {
+	if strings.HasSuffix(targetPath, ".sh") {
 		perm = 0755
 	}
 
@@ -699,7 +725,7 @@ func checkAndWrite(label string, targetPath string, fixture []byte, dryRun bool)
 				fmt.Printf("    error: cannot create directory %s: %v\n", dir, err)
 				return
 			}
-			if err := os.WriteFile(targetPath, fixture, perm); err != nil {
+			if err := os.WriteFile(targetPath, script, perm); err != nil {
 				fmt.Printf("    error: cannot write %s: %v\n", targetPath, err)
 				return
 			}
@@ -711,9 +737,9 @@ func checkAndWrite(label string, targetPath string, fixture []byte, dryRun bool)
 
 	// Compare content — normalize line endings for comparison
 	existingNorm := strings.ReplaceAll(string(existing), "\r\n", "\n")
-	fixtureNorm := strings.ReplaceAll(string(fixture), "\r\n", "\n")
+	scriptNorm := strings.ReplaceAll(string(script), "\r\n", "\n")
 
-	if existingNorm == fixtureNorm {
+	if existingNorm == scriptNorm {
 		fmt.Printf("  %s: up to date → %s\n", label, targetPath)
 		return
 	}
@@ -722,13 +748,13 @@ func checkAndWrite(label string, targetPath string, fixture []byte, dryRun bool)
 	fmt.Printf("  %s: update → %s\n", label, targetPath)
 	if dryRun {
 		// Show minimal diff hint
-		if len(existing) != len(fixture) {
-			fmt.Printf("    (size differs: installed %d bytes, fixture %d bytes)\n", len(existing), len(fixture))
+		if len(existing) != len(script) {
+			fmt.Printf("    (size differs: installed %d bytes, bundled %d bytes)\n", len(existing), len(script))
 		}
 		return
 	}
 
-	if err := os.WriteFile(targetPath, fixture, perm); err != nil {
+	if err := os.WriteFile(targetPath, script, perm); err != nil {
 		fmt.Printf("    error: cannot write %s: %v\n", targetPath, err)
 		return
 	}

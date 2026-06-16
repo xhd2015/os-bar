@@ -5,9 +5,8 @@
  * os-bar agent sessions macOS menu bar app.
  *
  * Install:
- *   1. agent-sessions install --opencode
- *   2. Add to opencode config (from within opencode):
- *        /config add plugin file://<path>
+ *   agent-sessions install --opencode
+ *   (global only: /config add plugin file://<path> if not auto-loaded)
  */
 
 type PluginInput = {

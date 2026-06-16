@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/old/path.sh",
+            "statusMessage": "os-bar agent-sessions notify"
+          }
+        ]
+      }
+    ]
+  }
+}
