@@ -11,6 +11,10 @@ CONTENTS="$BUNDLE_DIR/Contents"
 MACOS_BIN="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
 
+echo "==> Building os-bar-daemon CLI"
+cd "$MACOS_DIR/go-pkgs/cmd/os-bar"
+go build -o "$MACOS_DIR/.build/os-bar-daemon" .
+
 echo "==> Building $APP_NAME (release)"
 cd "$MACOS_DIR"
 swift build -c release
@@ -22,6 +26,8 @@ mkdir -p "$MACOS_BIN" "$RESOURCES"
 # Copy binary (architecture-agnostic)
 BIN_PATH="$(swift build -c release --show-bin-path)/$APP_NAME"
 cp "$BIN_PATH" "$MACOS_BIN/"
+cp "$MACOS_DIR/.build/os-bar-daemon" "$MACOS_BIN/os-bar-daemon"
+chmod +x "$MACOS_BIN/os-bar-daemon"
 
 # Create Info.plist
 cat > "$CONTENTS/Info.plist" <<PLIST

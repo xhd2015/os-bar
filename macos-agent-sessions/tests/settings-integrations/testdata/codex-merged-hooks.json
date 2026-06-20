@@ -1,0 +1,38 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/other.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/skynet.sh",
+            "statusMessage": "skynet stop"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__CODEX_SCRIPT_PATH__",
+            "timeout": 10,
+            "statusMessage": "os-bar agent-sessions notify",
+            "env": {
+              "AGENT_SESSIONS_AGENT": "codex"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

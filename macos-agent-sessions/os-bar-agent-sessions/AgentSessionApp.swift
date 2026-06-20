@@ -3,7 +3,7 @@ import ServiceManagement
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     weak var store: SessionStore?
-    var server: SessionServer?
+    private var daemonProcess: Process?
 
     /// Tracks how many dir-open operations are in-flight so the loading cursor
     /// stays pushed until all complete (or their 3s timeouts expire).
@@ -11,21 +11,55 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var loadingCursor: NSCursor?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        guard let store = store else { return }
-        let srv = SessionServer(store: store)
-        do {
-            try srv.start()
-            server = srv
-        } catch {
-            print("Failed to start server: \(error)")
-            let alert = NSAlert()
-            alert.messageText = "Server Error"
-            alert.informativeText = "Failed to start HTTP server: \(error.localizedDescription)"
-            alert.alertStyle = .critical
-            alert.addButton(withTitle: "Exit")
-            alert.runModal()
-            NSApplication.shared.terminate(nil)
+        if ProcessInfo.processInfo.arguments.contains("-uiTestingOpenSettings") {
+            return
         }
+        Task { @MainActor in
+            await ensureDaemonRunning()
+            await store?.refresh()
+        }
+    }
+
+    @MainActor
+    private func ensureDaemonRunning() async {
+        if (try? await DaemonClient.shared.health()) == true {
+            return
+        }
+        spawnDaemon()
+        for _ in 0..<50 {
+            if (try? await DaemonClient.shared.health()) == true {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        print("Warning: daemon health check failed after spawn")
+    }
+
+    private func spawnDaemon() {
+        let binary = daemonBinaryPath()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: binary)
+        process.arguments = ["serve"]
+        process.environment = ProcessInfo.processInfo.environment
+        do {
+            try process.run()
+            daemonProcess = process
+        } catch {
+            print("Failed to spawn daemon at \(binary): \(error)")
+        }
+    }
+
+    private func daemonBinaryPath() -> String {
+        if let cli = ProcessInfo.processInfo.environment["AGENT_SESSIONS_CLI"], !cli.isEmpty {
+            return cli
+        }
+        let bundled = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/MacOS/agent-sessions")
+            .path
+        if FileManager.default.fileExists(atPath: bundled) {
+            return bundled
+        }
+        return "/usr/local/bin/agent-sessions"
     }
 
     // MARK: - Open Directory
@@ -86,7 +120,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         durationMs: durationMs
                     )
                 )
-                NotifyLogStore.shared.append(entry)
+                Task {
+                    try? await DaemonClient.shared.appendLog(entry)
+                }
             }
         }
 
@@ -112,7 +148,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         durationMs: 0
                     )
                 )
-                NotifyLogStore.shared.append(entry)
+                Task {
+                    try? await DaemonClient.shared.appendLog(entry)
+                }
             }
         }
     }
@@ -158,7 +196,13 @@ struct AgentSessionApp: App {
     }
 
     var body: some Scene {
+        Window("Integrations", id: "integrations") {
+            IntegrationsSettingsView()
+        }
+        .windowResizability(.contentSize)
+
         MenuBarExtra {
+            IntegrationsLauncher()
             VStack(alignment: .leading, spacing: 0) {
                 if store.events.isEmpty {
                     Text("No sessions")
@@ -207,6 +251,8 @@ struct AgentSessionApp: App {
 
                 Divider()
 
+                SettingsMenuButton()
+
                 Button("Quit") {
                     NSApplication.shared.terminate(nil)
                 }
@@ -237,5 +283,31 @@ struct AgentSessionApp: App {
 
     private func openInCode(_ dir: String) {
         appDelegate.openDir(dir)
+    }
+}
+
+private struct IntegrationsLauncher: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .task {
+                if ProcessInfo.processInfo.arguments.contains("-uiTestingOpenSettings") {
+                    openWindow(id: "integrations")
+                }
+            }
+    }
+}
+
+private struct SettingsMenuButton: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("Settings…") {
+            openWindow(id: "integrations")
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
     }
 }

@@ -10,6 +10,10 @@ CONTENTS="$BUNDLE_DIR/Contents"
 MACOS_BIN="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
 
+echo "==> Building agent-sessions CLI"
+cd "$PROJECT_DIR/go-pkgs/cmd/agent-sessions"
+go build -o "$PROJECT_DIR/.build/agent-sessions" .
+
 echo "==> Building $APP_NAME (release)"
 cd "$PROJECT_DIR"
 swift build -c release
@@ -20,6 +24,8 @@ mkdir -p "$MACOS_BIN" "$RESOURCES"
 
 BIN_PATH="$(swift build -c release --show-bin-path)/$APP_NAME"
 cp "$BIN_PATH" "$MACOS_BIN/"
+cp "$PROJECT_DIR/.build/agent-sessions" "$MACOS_BIN/agent-sessions"
+chmod +x "$MACOS_BIN/agent-sessions"
 
 cat > "$CONTENTS/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

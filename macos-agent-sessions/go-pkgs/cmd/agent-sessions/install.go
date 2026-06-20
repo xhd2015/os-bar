@@ -1,163 +1,136 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
+
+	lessflags "github.com/xhd2015/less-flags"
+	"github.com/xhd2015/os-bar/macos-agent-sessions/go-pkgs/integrations"
 )
 
-const (
-	agentSessionsHookStatus  = "os-bar agent-sessions notify"
-	agentSessionsScriptToken = "__AGENT_SESSIONS_SCRIPT__"
-)
+func cmdIntegrations(args []string) {
+	var jsonOut bool
+	var global bool
 
-type hooksFile struct {
-	Hooks map[string][]hookMatcherGroup `json:"hooks"`
-}
+	helpText := `Usage: agent-sessions integrations [flags]
 
-type hookMatcherGroup struct {
-	Matcher string        `json:"matcher,omitempty"`
-	Hooks   []hookHandler `json:"hooks"`
-}
+Report install status for grok, opencode, pi, and codex integrations.
 
-type hookHandler struct {
-	Type          string            `json:"type"`
-	Command       string            `json:"command"`
-	Timeout       int               `json:"timeout,omitempty"`
-	StatusMessage string            `json:"statusMessage,omitempty"`
-	Env           map[string]string `json:"env,omitempty"`
-}
+Flags:
+  --json          output machine-readable JSON
+  --global        check global install locations (default: project-local)
+  -h, --help      show help
+`
 
-func grokHookPaths(global bool, homeDir, cwd string) (configPath, scriptPath string) {
-	var base string
-	if global {
-		base = filepath.Join(homeDir, ".grok", "hooks")
-	} else {
-		base = filepath.Join(cwd, ".grok", "hooks")
-	}
-	return filepath.Join(base, "agent-sessions.json"), filepath.Join(base, "bin", "agent-sessions-stop.sh")
-}
+	_, err := lessflags.Bool("--json", &jsonOut).
+		Bool("--global", &global).
+		Help("-h,--help", helpText).
+		Parse(args)
 
-func codexHookPaths(global bool, homeDir, cwd string) (configPath, scriptPath string) {
-	if global {
-		return filepath.Join(homeDir, ".codex", "hooks.json"), filepath.Join(homeDir, ".codex", "hooks", "agent-sessions-stop.sh")
-	}
-	return filepath.Join(cwd, ".codex", "hooks.json"), filepath.Join(cwd, ".codex", "hooks", "agent-sessions-stop.sh")
-}
-
-func parseHooksFile(data []byte, label string) (hooksFile, error) {
-	var file hooksFile
-	if len(bytes.TrimSpace(data)) == 0 {
-		return hooksFile{Hooks: make(map[string][]hookMatcherGroup)}, nil
-	}
-	if err := json.Unmarshal(data, &file); err != nil {
-		return hooksFile{}, fmt.Errorf("parse %s: %w", label, err)
-	}
-	if file.Hooks == nil {
-		file.Hooks = make(map[string][]hookMatcherGroup)
-	}
-	return file, nil
-}
-
-func codexHooksFixture(scriptPath string, fixtureTemplate []byte) (hooksFile, error) {
-	fixture := bytes.ReplaceAll(fixtureTemplate, []byte(agentSessionsScriptToken), []byte(scriptPath))
-	return parseHooksFile(fixture, "codex hooks fixture")
-}
-
-// mergeCodexHooks merges our fixture hooks into an existing hooks.json.
-// Existing hooks from other tools are preserved; only entries with
-// statusMessage "os-bar agent-sessions notify" are upserted.
-func mergeCodexHooks(existing, fixtureTemplate []byte, scriptPath string) ([]byte, error) {
-	existingFile, err := parseHooksFile(existing, "hooks.json")
 	if err != nil {
-		return nil, err
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
 	}
 
-	fixtureFile, err := codexHooksFixture(scriptPath, fixtureTemplate)
+	if !jsonOut {
+		fmt.Fprintf(os.Stderr, "error: --json is required\n")
+		os.Exit(1)
+	}
+
+	homeDir, _ := os.UserHomeDir()
+	cwd, _ := os.Getwd()
+
+	entries := integrations.List(global, homeDir, cwd)
+	out, err := json.Marshal(integrations.IntegrationsResponse{Integrations: entries})
 	if err != nil {
-		return nil, err
+		fmt.Fprintf(os.Stderr, "error: failed to marshal JSON: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(string(out))
+}
+
+func cmdInstall(args []string) {
+	var showPi bool
+	var showOpencode bool
+	var showGrok bool
+	var showCodex bool
+	var dryRun bool
+	var global bool
+
+	helpText := `Usage: agent-sessions install [flags]
+
+Install or update integration scripts for pi, opencode, grok, and codex.
+Checks whether the bundled script is already installed and compares content.
+
+Flags:
+  --pi            install/check pi extension
+  --opencode      install/check opencode plugin
+  --grok          install/check grok Stop notification hook
+  --codex         install/check codex Stop notification hook
+  --dry-run       check status only, do not write files
+  --global        install to global dir
+                  pi: ~/.pi/agent/extensions/
+                  opencode: ~/.config/opencode/plugins/
+                  grok: ~/.grok/hooks/
+                  codex: ~/.codex/
+                  default: project-local
+  -h, --help      show help
+`
+
+	_, err := lessflags.Bool("--pi", &showPi).
+		Bool("--opencode", &showOpencode).
+		Bool("--grok", &showGrok).
+		Bool("--codex", &showCodex).
+		Bool("--dry-run", &dryRun).
+		Bool("--global", &global).
+		Help("-h,--help", helpText).
+		Parse(args)
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
 	}
 
-	for event, fixtureGroups := range fixtureFile.Hooks {
-		for _, fixtureGroup := range fixtureGroups {
-			for _, fixtureHandler := range fixtureGroup.Hooks {
-				if fixtureHandler.StatusMessage != agentSessionsHookStatus {
-					continue
-				}
-				upsertHookHandler(&existingFile, event, fixtureHandler)
-			}
+	if !showPi && !showOpencode && !showGrok && !showCodex {
+		fmt.Fprintf(os.Stderr, "error: at least one of --pi, --opencode, --grok, or --codex is required\n")
+		os.Exit(1)
+	}
+
+	homeDir, _ := os.UserHomeDir()
+	cwd, _ := os.Getwd()
+
+	if showPi {
+		var targetPath string
+		if global {
+			targetPath = filepath.Join(homeDir, ".pi", "agent", "extensions", "agent-sessions-hook.ts")
+		} else {
+			targetPath = filepath.Join(cwd, ".pi", "extensions", "agent-sessions-hook.ts")
+		}
+		integrations.CheckAndWrite("pi extension", targetPath, integrations.PiExtension(), dryRun)
+	}
+
+	if showOpencode {
+		var targetPath string
+		if global {
+			targetPath = filepath.Join(homeDir, ".config", "opencode", "plugins", "agent-sessions.ts")
+		} else {
+			targetPath = filepath.Join(cwd, ".opencode", "plugins", "agent-sessions.ts")
+		}
+		written := integrations.CheckAndWrite("opencode plugin", targetPath, integrations.OpencodePlugin(), dryRun)
+		if written && !dryRun && global {
+			fmt.Println()
+			fmt.Println("  To enable, run this inside opencode:")
+			fmt.Printf("    /config add plugin file://%s\n", targetPath)
 		}
 	}
 
-	out, err := json.MarshalIndent(existingFile, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	return append(out, '\n'), nil
-}
-
-func upsertHookHandler(file *hooksFile, event string, handler hookHandler) {
-	groups := file.Hooks[event]
-	for i, group := range groups {
-		for j, existing := range group.Hooks {
-			if existing.StatusMessage == agentSessionsHookStatus {
-				groups[i].Hooks[j] = handler
-				file.Hooks[event] = groups
-				return
-			}
-		}
-	}
-	file.Hooks[event] = append(groups, hookMatcherGroup{Hooks: []hookHandler{handler}})
-}
-
-func installGrok(global bool, homeDir, cwd string, dryRun bool) {
-	configPath, scriptPath := grokHookPaths(global, homeDir, cwd)
-	checkAndWrite("grok hook script", scriptPath, hookScript, dryRun)
-	checkAndWrite("grok hooks", configPath, grokHooksJSON, dryRun)
-}
-
-func installCodex(global bool, homeDir, cwd string, dryRun bool) {
-	configPath, scriptPath := codexHookPaths(global, homeDir, cwd)
-	checkAndWrite("codex hook script", scriptPath, hookScript, dryRun)
-
-	existing, err := os.ReadFile(configPath)
-	if err != nil && !os.IsNotExist(err) {
-		fmt.Printf("  codex hooks: error reading %s: %v\n", configPath, err)
-		return
+	if showGrok {
+		integrations.InstallGrok(global, homeDir, cwd, dryRun)
 	}
 
-	merged, err := mergeCodexHooks(existing, codexHooksJSON, scriptPath)
-	if err != nil {
-		fmt.Printf("  codex hooks: error merging %s: %v\n", configPath, err)
-		return
+	if showCodex {
+		integrations.InstallCodex(global, homeDir, cwd, dryRun)
 	}
-
-	existingNorm := strings.ReplaceAll(string(existing), "\r\n", "\n")
-	mergedNorm := strings.ReplaceAll(string(merged), "\r\n", "\n")
-	if existingNorm == mergedNorm {
-		fmt.Printf("  codex hooks: up to date → %s\n", configPath)
-		return
-	}
-
-	if len(existing) == 0 {
-		fmt.Printf("  codex hooks: install → %s\n", configPath)
-	} else {
-		fmt.Printf("  codex hooks: update → %s\n", configPath)
-	}
-	if dryRun {
-		return
-	}
-
-	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
-		fmt.Printf("    error: cannot create directory %s: %v\n", filepath.Dir(configPath), err)
-		return
-	}
-	if err := os.WriteFile(configPath, merged, 0644); err != nil {
-		fmt.Printf("    error: cannot write %s: %v\n", configPath, err)
-		return
-	}
-	fmt.Printf("    written\n")
 }

@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,22 +13,8 @@ import (
 	"time"
 
 	lessflags "github.com/xhd2015/less-flags"
+	"github.com/xhd2015/os-bar/macos-agent-sessions/go-pkgs/server"
 )
-
-//go:embed scripts/pi-agent-sessions-hook.ts
-var piExtension []byte
-
-//go:embed scripts/opencode-agent-sessions-plugin.ts
-var opencodePlugin []byte
-
-//go:embed scripts/agent-sessions-stop.sh
-var hookScript []byte
-
-//go:embed scripts/grok-agent-sessions-hooks.json
-var grokHooksJSON []byte
-
-//go:embed scripts/codex-agent-sessions-hooks.json
-var codexHooksJSON []byte
 
 const (
 	defaultPort = 38271
@@ -60,8 +45,15 @@ func main() {
 		cmdLogs(args)
 	case "install":
 		cmdInstall(args)
+	case "integrations":
+		cmdIntegrations(args)
 	case "watch":
 		cmdWatch(args)
+	case "serve":
+		if err := server.RunServe(args); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
 	case "-h", "--help":
 		printUsage()
 		os.Exit(0)
@@ -85,9 +77,11 @@ Commands:
   status           Check if the agent sessions server is running
   config-location  Show where session data files are stored
   install          Install or update integration scripts
+  integrations     Report integration install status
   logs             Show notification log entries (debugging)
   remove           Remove session events for a directory
   watch            Watch a directory and notify on file changes
+  serve            Start the HTTP daemon server
 
 Run 'agent-sessions <command> --help' for more details.
 `)
@@ -615,152 +609,6 @@ func truncateStr(s string, max int) string {
 		return s
 	}
 	return s[:max] + "…"
-}
-
-// --- install subcommand ---
-
-func cmdInstall(args []string) {
-	var showPi bool
-	var showOpencode bool
-	var showGrok bool
-	var showCodex bool
-	var dryRun bool
-	var global bool
-
-	helpText := `Usage: agent-sessions install [flags]
-
-Install or update integration scripts for pi, opencode, grok, and codex.
-Checks whether the bundled script is already installed and compares content.
-
-Flags:
-  --pi            install/check pi extension
-  --opencode      install/check opencode plugin
-  --grok          install/check grok Stop notification hook
-  --codex         install/check codex Stop notification hook
-  --dry-run       check status only, do not write files
-  --global        install to global dir
-                  pi: ~/.pi/agent/extensions/
-                  opencode: ~/.config/opencode/plugins/
-                  grok: ~/.grok/hooks/
-                  codex: ~/.codex/
-                  default: project-local
-  -h, --help      show help
-`
-
-	_, err := lessflags.Bool("--pi", &showPi).
-		Bool("--opencode", &showOpencode).
-		Bool("--grok", &showGrok).
-		Bool("--codex", &showCodex).
-		Bool("--dry-run", &dryRun).
-		Bool("--global", &global).
-		Help("-h,--help", helpText).
-		Parse(args)
-
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-
-	if !showPi && !showOpencode && !showGrok && !showCodex {
-		fmt.Fprintf(os.Stderr, "error: at least one of --pi, --opencode, --grok, or --codex is required\n")
-		os.Exit(1)
-	}
-
-	homeDir, _ := os.UserHomeDir()
-	cwd, _ := os.Getwd()
-
-	if showPi {
-		var targetPath string
-		if global {
-			targetPath = filepath.Join(homeDir, ".pi", "agent", "extensions", "agent-sessions-hook.ts")
-		} else {
-			targetPath = filepath.Join(cwd, ".pi", "extensions", "agent-sessions-hook.ts")
-		}
-		checkAndWrite("pi extension", targetPath, piExtension, dryRun)
-	}
-
-	if showOpencode {
-		var targetPath string
-		if global {
-			targetPath = filepath.Join(homeDir, ".config", "opencode", "plugins", "agent-sessions.ts")
-		} else {
-			targetPath = filepath.Join(cwd, ".opencode", "plugins", "agent-sessions.ts")
-		}
-		written := checkAndWrite("opencode plugin", targetPath, opencodePlugin, dryRun)
-		if written && !dryRun && global {
-			fmt.Println()
-			fmt.Println("  To enable, run this inside opencode:")
-			fmt.Printf("    /config add plugin file://%s\n", targetPath)
-		}
-	}
-
-	if showGrok {
-		installGrok(global, homeDir, cwd, dryRun)
-	}
-
-	if showCodex {
-		installCodex(global, homeDir, cwd, dryRun)
-	}
-}
-
-func checkAndWrite(label string, targetPath string, script []byte, dryRun bool) (written bool) {
-	dir := filepath.Dir(targetPath)
-
-	// Shell scripts and bin/ wrappers need the execute bit.
-	perm := os.FileMode(0644)
-	if strings.HasSuffix(targetPath, ".sh") {
-		perm = 0755
-	}
-
-	existing, err := os.ReadFile(targetPath)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			fmt.Printf("  %s: error reading %s: %v\n", label, targetPath, err)
-			return
-		}
-		// Not installed
-		fmt.Printf("  %s: install → %s\n", label, targetPath)
-		if !dryRun {
-			if err := os.MkdirAll(dir, 0755); err != nil {
-				fmt.Printf("    error: cannot create directory %s: %v\n", dir, err)
-				return
-			}
-			if err := os.WriteFile(targetPath, script, perm); err != nil {
-				fmt.Printf("    error: cannot write %s: %v\n", targetPath, err)
-				return
-			}
-			fmt.Printf("    written\n")
-			written = true
-		}
-		return
-	}
-
-	// Compare content — normalize line endings for comparison
-	existingNorm := strings.ReplaceAll(string(existing), "\r\n", "\n")
-	scriptNorm := strings.ReplaceAll(string(script), "\r\n", "\n")
-
-	if existingNorm == scriptNorm {
-		fmt.Printf("  %s: up to date → %s\n", label, targetPath)
-		return
-	}
-
-	// Outdated
-	fmt.Printf("  %s: update → %s\n", label, targetPath)
-	if dryRun {
-		// Show minimal diff hint
-		if len(existing) != len(script) {
-			fmt.Printf("    (size differs: installed %d bytes, bundled %d bytes)\n", len(existing), len(script))
-		}
-		return
-	}
-
-	if err := os.WriteFile(targetPath, script, perm); err != nil {
-		fmt.Printf("    error: cannot write %s: %v\n", targetPath, err)
-		return
-	}
-	fmt.Printf("    updated\n")
-	written = true
-	return
 }
 
 // --- watch subcommand ---

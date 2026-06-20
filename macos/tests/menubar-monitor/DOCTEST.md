@@ -1,5 +1,9 @@
 # Menu Bar CPU/MEM Monitor — Doc-Style Test Tree
 
+> **Deprecated (automated leaves):** Backend tests moved to `go-pkgs/server/tests/`.
+> Run `cd go-pkgs/cmd/os-bar && doctest test ../../server/tests` instead.
+> This tree is retained for manual UI verification (`ui/`).
+
 Test suite for the `SystemMonitor` component of the macOS menu bar app.
 Validates metric fetching, range correctness, timer-driven refresh behavior,
 and (manually) menu bar rendering and quit functionality.

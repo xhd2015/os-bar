@@ -1,5 +1,8 @@
 import Foundation
 
+// Deprecated: metrics backend moved to Go daemon (go-pkgs/server/tests).
+// Retained for reference; no longer used by automated tests.
+
 // MARK: - JSON Request/Response Models
 
 struct Request: Codable {

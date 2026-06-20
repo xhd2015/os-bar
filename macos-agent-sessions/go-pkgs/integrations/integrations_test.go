@@ -1,4 +1,4 @@
-package main
+package integrations
 
 import (
 	"encoding/json"
@@ -12,7 +12,7 @@ func TestGrokHookPaths(t *testing.T) {
 	home := "/home/user"
 	cwd := "/proj"
 
-	globalConfig, globalScript := grokHookPaths(true, home, cwd)
+	globalConfig, globalScript := GrokHookPaths(true, home, cwd)
 	if globalConfig != filepath.Join(home, ".grok", "hooks", "agent-sessions.json") {
 		t.Fatalf("global config path: got %q", globalConfig)
 	}
@@ -20,7 +20,7 @@ func TestGrokHookPaths(t *testing.T) {
 		t.Fatalf("global script path: got %q", globalScript)
 	}
 
-	localConfig, localScript := grokHookPaths(false, home, cwd)
+	localConfig, localScript := GrokHookPaths(false, home, cwd)
 	if localConfig != filepath.Join(cwd, ".grok", "hooks", "agent-sessions.json") {
 		t.Fatalf("local config path: got %q", localConfig)
 	}
@@ -33,7 +33,7 @@ func TestCodexHookPaths(t *testing.T) {
 	home := "/home/user"
 	cwd := "/proj"
 
-	globalConfig, globalScript := codexHookPaths(true, home, cwd)
+	globalConfig, globalScript := CodexHookPaths(true, home, cwd)
 	if globalConfig != filepath.Join(home, ".codex", "hooks.json") {
 		t.Fatalf("global config path: got %q", globalConfig)
 	}
@@ -41,7 +41,7 @@ func TestCodexHookPaths(t *testing.T) {
 		t.Fatalf("global script path: got %q", globalScript)
 	}
 
-	localConfig, localScript := codexHookPaths(false, home, cwd)
+	localConfig, localScript := CodexHookPaths(false, home, cwd)
 	if localConfig != filepath.Join(cwd, ".codex", "hooks.json") {
 		t.Fatalf("local config path: got %q", localConfig)
 	}
@@ -52,7 +52,7 @@ func TestCodexHookPaths(t *testing.T) {
 
 func TestMergeCodexHooksEmpty(t *testing.T) {
 	script := "/home/user/.codex/hooks/agent-sessions-stop.sh"
-	merged, err := mergeCodexHooks(nil, codexHooksJSON, script)
+	merged, err := MergeCodexHooks(nil, codexHooksJSON, script)
 	if err != nil {
 		t.Fatalf("merge empty: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestMergeCodexHooksPreservesExisting(t *testing.T) {
   }
 }`)
 	script := "/home/user/.codex/hooks/agent-sessions-stop.sh"
-	merged, err := mergeCodexHooks(existing, codexHooksJSON, script)
+	merged, err := MergeCodexHooks(existing, codexHooksJSON, script)
 	if err != nil {
 		t.Fatalf("merge existing: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestMergeCodexHooksPreservesExisting(t *testing.T) {
 	for _, group := range file.Hooks["Stop"] {
 		for _, handler := range group.Hooks {
 			switch handler.StatusMessage {
-			case agentSessionsHookStatus:
+			case AgentSessionsHookStatus:
 				foundOurs = true
 				if handler.Command != script {
 					t.Fatalf("our command: got %q", handler.Command)
@@ -146,7 +146,7 @@ func TestMergeCodexHooksUpsertsExistingEntry(t *testing.T) {
   }
 }`)
 	script := "/new/path.sh"
-	merged, err := mergeCodexHooks(existing, codexHooksJSON, script)
+	merged, err := MergeCodexHooks(existing, codexHooksJSON, script)
 	if err != nil {
 		t.Fatalf("merge upsert: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestMergeCodexHooksUpsertsExistingEntry(t *testing.T) {
 }
 
 func TestMergeCodexHooksMalformedJSON(t *testing.T) {
-	_, err := mergeCodexHooks([]byte("{not json"), codexHooksJSON, "/script.sh")
+	_, err := MergeCodexHooks([]byte("{not json"), codexHooksJSON, "/script.sh")
 	if err == nil {
 		t.Fatal("expected error for malformed JSON")
 	}
@@ -194,14 +194,14 @@ func TestInstallCodexWritesMergedHooks(t *testing.T) {
 	}
 	t.Setenv("HOME", home)
 
-	installCodex(false, home, cwd, false)
+	InstallCodex(false, home, cwd, false)
 
 	configPath := filepath.Join(cwd, ".codex", "hooks.json")
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		t.Fatalf("read hooks.json: %v", err)
 	}
-	if !strings.Contains(string(data), agentSessionsHookStatus) {
+	if !strings.Contains(string(data), AgentSessionsHookStatus) {
 		t.Fatalf("merged hooks missing our status message: %s", data)
 	}
 
