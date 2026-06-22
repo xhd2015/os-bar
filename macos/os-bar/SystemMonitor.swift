@@ -8,6 +8,8 @@ final class SystemMonitor: ObservableObject {
     @Published var memUsedBytes: UInt64 = 0
     @Published var swapTotalBytes: UInt64 = 0
     @Published var swapUsedBytes: UInt64 = 0
+    @Published var diskTotalBytes: UInt64 = 0
+    @Published var diskUsedBytes: UInt64 = 0
 
     var cpuDisplay: String {
         if cpuCores <= 0 {
@@ -24,6 +26,10 @@ final class SystemMonitor: ObservableObject {
         Self.formatSwapDisplay(total: swapTotalBytes, used: swapUsedBytes)
     }
 
+    var diskDisplay: String {
+        Self.formatDiskDisplay(total: diskTotalBytes, used: diskUsedBytes)
+    }
+
     private static func formatMemDisplay(total: UInt64, used: UInt64) -> String {
         if total == 0 { return "0% (0B/0B)" }
         let percent = (used * 100 + total / 2) / total
@@ -34,6 +40,53 @@ final class SystemMonitor: ObservableObject {
         if total == 0 { return "0% (0B/0B)" }
         let percent = (used * 100 + total / 2) / total
         return "\(percent)% (\(formatBytes(used))/\(formatBytes(total)))"
+    }
+
+    private static func formatDiskDisplay(total: UInt64, used: UInt64) -> String {
+        if total == 0 { return "0% (0B/0B)" }
+        let percent = (used * 100 + total / 2) / total
+        return "\(percent)% (\(formatDiskBytesBinaryUsed(used))/\(formatDiskBytesBinaryTotal(total)), \(formatDiskBytesDecimal(used))/\(formatDiskBytesDecimal(total)) on MacOS Settings)"
+    }
+
+    private static func formatDiskBytesBinaryUsed(_ bytes: UInt64) -> String {
+        if bytes == 0 { return "0B" }
+        let gib = Double(1024 * 1024 * 1024)
+        let mib = Double(1024 * 1024)
+        let gb = Double(bytes) / gib
+        if gb >= 1.0 {
+            return String(format: "%.2fGB", gb)
+        }
+        let mb = Double(bytes) / mib
+        if mb >= 1.0 {
+            return String(format: "%.2fMB", mb)
+        }
+        return "\(bytes)B"
+    }
+
+    private static func formatDiskBytesBinaryTotal(_ bytes: UInt64) -> String {
+        if bytes == 0 { return "0B" }
+        let gib: UInt64 = 1024 * 1024 * 1024
+        let mib: UInt64 = 1024 * 1024
+        if bytes >= gib {
+            return "\(bytes / gib)GB"
+        }
+        if bytes >= mib {
+            return "\(bytes / mib)MB"
+        }
+        return "\(bytes)B"
+    }
+
+    private static func formatDiskBytesDecimal(_ bytes: UInt64) -> String {
+        if bytes == 0 { return "0B" }
+        let gb = Double(bytes) / 1_000_000_000.0
+        if gb >= 1.0 {
+            return String(format: "%.2fGB", gb)
+        }
+        let mb = Double(bytes) / 1_000_000.0
+        if mb >= 1.0 {
+            return String(format: "%.2fMB", mb)
+        }
+        return "\(bytes)B"
     }
 
     private static func formatBytes(_ bytes: UInt64) -> String {
@@ -86,6 +139,8 @@ final class SystemMonitor: ObservableObject {
             memUsedBytes = snapshot.memUsedBytes
             swapTotalBytes = snapshot.swapTotalBytes
             swapUsedBytes = snapshot.swapUsedBytes
+            diskTotalBytes = snapshot.diskTotalBytes
+            diskUsedBytes = snapshot.diskUsedBytes
         } catch {
             print("Failed to fetch metrics: \(error)")
         }

@@ -25,6 +25,7 @@ struct os_barApp: App {
                 Text("CPU: \(monitor.cpuDisplay)")
                 Text("Memory: \(monitor.memDisplay)")
                 Text("Swap: \(monitor.swapDisplay)")
+                Text("Disk: \(monitor.diskDisplay)")
 
                 Divider()
 

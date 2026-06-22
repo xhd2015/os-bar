@@ -64,3 +64,15 @@ func (m *MockProvider) SwapStats() SwapStats {
 		return SwapStats{TotalBytes: 4294967296, UsedBytes: 209715200}
 	}
 }
+
+// DiskStats returns root volume disk totals for the current tick.
+func (m *MockProvider) DiskStats() DiskStats {
+	switch m.tick {
+	case 0:
+		return DiskStats{TotalBytes: 536870912000, UsedBytes: 214748364800}
+	case 1:
+		return DiskStats{TotalBytes: 536870912000, UsedBytes: 241591910400}
+	default:
+		return DiskStats{TotalBytes: 1099511627776, UsedBytes: 429496729600}
+	}
+}

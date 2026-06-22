@@ -71,11 +71,14 @@ type metricsPayload struct {
 	MemUsedBytes   uint64  `json:"mem_used_bytes"`
 	SwapTotalBytes uint64  `json:"swap_total_bytes"`
 	SwapUsedBytes  uint64  `json:"swap_used_bytes"`
+	DiskTotalBytes uint64  `json:"disk_total_bytes"`
+	DiskUsedBytes  uint64  `json:"disk_used_bytes"`
 }
 
 func (d *daemon) metricsPayload() metricsPayload {
 	mem := d.provider.MEMStats()
 	swap := d.provider.SwapStats()
+	disk := d.provider.DiskStats()
 	return metricsPayload{
 		CPUPercent:     d.provider.CPUPercent(),
 		CPUCores:       d.provider.CPUCores(),
@@ -84,6 +87,8 @@ func (d *daemon) metricsPayload() metricsPayload {
 		MemUsedBytes:   mem.UsedBytes,
 		SwapTotalBytes: swap.TotalBytes,
 		SwapUsedBytes:  swap.UsedBytes,
+		DiskTotalBytes: disk.TotalBytes,
+		DiskUsedBytes:  disk.UsedBytes,
 	}
 }
 

@@ -25,6 +25,8 @@ struct MetricsSnapshot: Decodable {
     let memUsedBytes: UInt64
     let swapTotalBytes: UInt64
     let swapUsedBytes: UInt64
+    let diskTotalBytes: UInt64
+    let diskUsedBytes: UInt64
 
     enum CodingKeys: String, CodingKey {
         case cpuPercent = "cpu_percent"
@@ -34,6 +36,8 @@ struct MetricsSnapshot: Decodable {
         case memUsedBytes = "mem_used_bytes"
         case swapTotalBytes = "swap_total_bytes"
         case swapUsedBytes = "swap_used_bytes"
+        case diskTotalBytes = "disk_total_bytes"
+        case diskUsedBytes = "disk_used_bytes"
     }
 }
 

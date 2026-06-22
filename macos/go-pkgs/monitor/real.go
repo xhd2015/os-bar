@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/disk"
 	"github.com/shirou/gopsutil/v4/mem"
 )
 
@@ -67,4 +68,13 @@ func (r *RealProvider) SwapStats() SwapStats {
 		return SwapStats{}
 	}
 	return SwapStats{TotalBytes: swap.Total, UsedBytes: swap.Used}
+}
+
+// DiskStats returns total and used space on the root volume from the OS.
+func (r *RealProvider) DiskStats() DiskStats {
+	usage, err := disk.Usage("/")
+	if err != nil {
+		return DiskStats{}
+	}
+	return DiskStats{TotalBytes: usage.Total, UsedBytes: usage.Used}
 }

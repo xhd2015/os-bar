@@ -112,6 +112,8 @@ Flags:
 		MemUsedBytes   uint64  `json:"mem_used_bytes"`
 		SwapTotalBytes uint64  `json:"swap_total_bytes"`
 		SwapUsedBytes  uint64  `json:"swap_used_bytes"`
+		DiskTotalBytes uint64  `json:"disk_total_bytes"`
+		DiskUsedBytes  uint64  `json:"disk_used_bytes"`
 	}
 	if err := json.Unmarshal(body, &metrics); err != nil {
 		fmt.Fprintf(os.Stderr, "error: parse metrics: %v\n", err)
@@ -121,4 +123,5 @@ Flags:
 	fmt.Printf("CPU: %s\n", monitor.FormatCPUDisplay(metrics.CPUPercent, metrics.CPUCores))
 	fmt.Printf("Memory: %s\n", monitor.FormatMemDisplay(metrics.MemTotalBytes, metrics.MemUsedBytes))
 	fmt.Printf("Swap: %s\n", monitor.FormatSwapDisplay(metrics.SwapTotalBytes, metrics.SwapUsedBytes))
+	fmt.Printf("Disk: %s\n", monitor.FormatDiskDisplay(metrics.DiskTotalBytes, metrics.DiskUsedBytes))
 }

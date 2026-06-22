@@ -12,11 +12,18 @@ type SwapStats struct {
 	UsedBytes  uint64
 }
 
-// MetricsProvider supplies point-in-time CPU, memory, and swap metrics.
+// DiskStats holds total and used disk space on the root volume in bytes.
+type DiskStats struct {
+	TotalBytes uint64
+	UsedBytes  uint64
+}
+
+// MetricsProvider supplies point-in-time CPU, memory, swap, and disk metrics.
 type MetricsProvider interface {
 	CPUPercent() float64
 	CPUCores() int
 	MEMPercent() float64
 	MEMStats() MemStats
 	SwapStats() SwapStats
+	DiskStats() DiskStats
 }

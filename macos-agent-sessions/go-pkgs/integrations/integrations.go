@@ -60,18 +60,35 @@ type hookHandler struct {
 	Env           map[string]string `json:"env,omitempty"`
 }
 
-// List returns install status for grok, opencode, pi, and codex.
+// List returns install status for grok, opencode, pi, and codex in one scope.
 func List(global bool, homeDir, cwd string) []IntegrationEntry {
-	scope := "local"
-	if global {
-		scope = "global"
+	return ListScopes(global, !global, homeDir, cwd)
+}
+
+// ListScopes returns install status for the requested scopes.
+// When both includeGlobal and includeLocal are false, both scopes are listed.
+func ListScopes(includeGlobal, includeLocal bool, homeDir, cwd string) []IntegrationEntry {
+	if !includeGlobal && !includeLocal {
+		includeGlobal = true
+		includeLocal = true
 	}
-	return []IntegrationEntry{
-		grokIntegrationStatus(global, homeDir, cwd, scope),
-		opencodeIntegrationStatus(global, homeDir, cwd, scope),
-		piIntegrationStatus(global, homeDir, cwd, scope),
-		codexIntegrationStatus(global, homeDir, cwd, scope),
+
+	var entries []IntegrationEntry
+	agents := []func(bool, string, string, string) IntegrationEntry{
+		grokIntegrationStatus,
+		opencodeIntegrationStatus,
+		piIntegrationStatus,
+		codexIntegrationStatus,
 	}
+	for _, statusFn := range agents {
+		if includeGlobal {
+			entries = append(entries, statusFn(true, homeDir, cwd, "global"))
+		}
+		if includeLocal {
+			entries = append(entries, statusFn(false, homeDir, cwd, "local"))
+		}
+	}
+	return entries
 }
 
 // Install writes integration files for the given target without CLI output.

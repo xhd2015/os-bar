@@ -7,13 +7,16 @@
 doctest Run(req) -> build CLI -> serve --state-dir --port --mock-metrics -> server -> daemon
 
 # HTTP client exercises metrics REST API
-doctest <- GET /api/metrics (cpu_percent, mem_percent, swap_total_bytes, swap_used_bytes)
+doctest <- GET /api/metrics (cpu_percent, mem_percent, swap_total_bytes, swap_used_bytes, disk_total_bytes, disk_used_bytes)
 doctest -> POST /api/test/advance-tick -> mock provider advances tick
 doctest <- GET /api/health | /api/info
 
 # formatter helpers (no daemon)
 doctest -> monitor.FormatBytes(bytes) -> "2GB" | "100MB" | "0B"
 doctest -> monitor.FormatSwapDisplay(total, used) -> "89%(8GB/9GB)"
+doctest -> monitor.FormatDiskBytesBinaryUsed/Total(bytes) -> "200.00GB" | "500GB"
+doctest -> monitor.FormatDiskBytesDecimal(bytes) -> "536.87GB" | "214.75GB" | "0B"
+doctest -> monitor.FormatDiskDisplay(total, used) -> "40% (200.00GB/500GB, 214.75GB/536.87GB on MacOS Settings)"
 ```
 
 ## Preconditions
@@ -41,16 +44,22 @@ doctest -> monitor.FormatSwapDisplay(total, used) -> "89%(8GB/9GB)"
    - `metrics_tick` — `GET /api/metrics`, `POST /api/test/advance-tick`, `GET /api/metrics`; encode before/after CPU/MEM/swap in `HTTPBody`
    - `format_bytes` — call `monitor.FormatBytes(req.FormatBytesInput)`, store in `FormatResult`
    - `format_swap_display` — call `monitor.FormatSwapDisplay(req.FormatSwapTotal, req.FormatSwapUsed)`, store in `FormatResult`
-5. Parse `/api/metrics` JSON into `Response.CPUPercent` / `Response.MEMPercent` / swap byte fields.
+   - `format_disk_bytes` — call `monitor.FormatDiskBytesDecimal(req.FormatBytesInput)`, store in `FormatResult`
+   - `format_disk_bytes_binary_used` — call `monitor.FormatDiskBytesBinaryUsed(req.FormatBytesInput)`, store in `FormatResult`
+   - `format_disk_bytes_binary_total` — call `monitor.FormatDiskBytesBinaryTotal(req.FormatBytesInput)`, store in `FormatResult`
+   - `format_disk_display` — call `monitor.FormatDiskDisplay(req.FormatDiskTotal, req.FormatDiskUsed)`, store in `FormatResult`
+5. Parse `/api/metrics` JSON into `Response.CPUPercent` / `Response.MEMPercent` / swap and disk byte fields.
 6. Return `(*Response, nil)`.
 
 ## Context
 
-- Metrics response: `{"cpu_percent": float64, "mem_percent": float64, "swap_total_bytes": uint64, "swap_used_bytes": uint64}`; CPU/MEM in `[0.0, 100.0]`.
-- Mock tick 0: CPU=45.2, MEM=72.8, swap total=2147483648, swap used=104857600.
-- Mock tick 1: CPU=52.3, MEM=68.1, swap total=2147483648, swap used=157286400.
-- Mock tick 2+: CPU=38.7, MEM=75.4, swap total=4294967296, swap used=209715200.
+- Metrics response: `{"cpu_percent": float64, "mem_percent": float64, "swap_total_bytes": uint64, "swap_used_bytes": uint64, "disk_total_bytes": uint64, "disk_used_bytes": uint64}`; CPU/MEM in `[0.0, 100.0]`.
+- Mock tick 0: CPU=45.2, MEM=72.8, swap total=2147483648, swap used=104857600, disk total=536870912000, disk used=214748364800.
+- Mock tick 1: CPU=52.3, MEM=68.1, swap total=2147483648, swap used=157286400, disk total=536870912000, disk used=241591910400.
+- Mock tick 2+: CPU=38.7, MEM=75.4, swap total=4294967296, swap used=209715200, disk total=1099511627776, disk used=429496729600.
 - `FormatBytes` / `FormatSwapDisplay`: binary (1024) units, integer labels only (`2GB`, `100MB`, `0B`).
+- `FormatDiskBytesBinaryUsed` / `FormatDiskBytesBinaryTotal`: 1024-based labels (`200.00GB` used, `500GB` total).
+- `FormatDiskBytesDecimal` / `FormatDiskDisplay`: decimal (1000) labels (`494.38GB`) plus dual-line display with `on MacOS Settings` suffix.
 - `POST /api/test/advance-tick` returns 403 when not in mock mode.
 - Error parity: unknown path → 404, wrong method on known path → 405.
 - Singleton: second `serve` exits 0 if existing PID alive and `/api/health` OK.
@@ -85,6 +94,10 @@ const (
 	actionMetricsTick        = "metrics_tick"
 	actionFormatBytes        = "format_bytes"
 	actionFormatSwapDisplay  = "format_swap_display"
+	actionFormatDiskBytes           = "format_disk_bytes"
+	actionFormatDiskBytesBinaryUsed = "format_disk_bytes_binary_used"
+	actionFormatDiskBytesBinaryTotal = "format_disk_bytes_binary_total"
+	actionFormatDiskDisplay         = "format_disk_display"
 
 	daemonReadyTimeout = 10 * time.Second
 	daemonReadyPoll    = 50 * time.Millisecond
@@ -104,10 +117,14 @@ type MetricsTickResult struct {
 	BeforeMEM       float64 `json:"before_mem"`
 	BeforeSwapTotal uint64  `json:"before_swap_total"`
 	BeforeSwapUsed  uint64  `json:"before_swap_used"`
+	BeforeDiskTotal uint64  `json:"before_disk_total"`
+	BeforeDiskUsed  uint64  `json:"before_disk_used"`
 	AfterCPU        float64 `json:"after_cpu"`
 	AfterMEM        float64 `json:"after_mem"`
 	AfterSwapTotal  uint64  `json:"after_swap_total"`
 	AfterSwapUsed   uint64  `json:"after_swap_used"`
+	AfterDiskTotal  uint64  `json:"after_disk_total"`
+	AfterDiskUsed   uint64  `json:"after_disk_used"`
 }
 
 // Request drives daemon lifecycle and HTTP calls. Defined only at root.
@@ -124,6 +141,8 @@ type Request struct {
 	FormatBytesInput uint64
 	FormatSwapTotal  uint64
 	FormatSwapUsed   uint64
+	FormatDiskTotal  uint64
+	FormatDiskUsed   uint64
 }
 
 // Response captures daemon and HTTP outcomes.
@@ -135,6 +154,8 @@ type Response struct {
 	MEMPercent          float64
 	SwapTotalBytes      uint64
 	SwapUsedBytes       uint64
+	DiskTotalBytes      uint64
+	DiskUsedBytes       uint64
 	FormatResult        string
 	PID                 int
 	SecondStartExitCode int
@@ -314,17 +335,19 @@ func doHTTP(t *testing.T, baseURL string, method, path, body, contentType string
 	return resp.StatusCode, string(respBody)
 }
 
-func parseMetrics(body string) (cpu, mem float64, swapTotal, swapUsed uint64, err error) {
+func parseMetrics(body string) (cpu, mem float64, swapTotal, swapUsed, diskTotal, diskUsed uint64, err error) {
 	var payload struct {
 		CPUPercent     float64 `json:"cpu_percent"`
 		MEMPercent     float64 `json:"mem_percent"`
 		SwapTotalBytes uint64  `json:"swap_total_bytes"`
 		SwapUsedBytes  uint64  `json:"swap_used_bytes"`
+		DiskTotalBytes uint64  `json:"disk_total_bytes"`
+		DiskUsedBytes  uint64  `json:"disk_used_bytes"`
 	}
 	if err = json.Unmarshal([]byte(body), &payload); err != nil {
-		return 0, 0, 0, 0, err
+		return 0, 0, 0, 0, 0, 0, err
 	}
-	return payload.CPUPercent, payload.MEMPercent, payload.SwapTotalBytes, payload.SwapUsedBytes, nil
+	return payload.CPUPercent, payload.MEMPercent, payload.SwapTotalBytes, payload.SwapUsedBytes, payload.DiskTotalBytes, payload.DiskUsedBytes, nil
 }
 
 func runSingleton(t *testing.T, binary string, req *Request) *Response {
@@ -370,7 +393,7 @@ func runMetricsFetch(t *testing.T, binary string, req *Request) *Response {
 	t.Helper()
 	handle := ensureDaemon(t, binary, req)
 	status, body := doHTTP(t, handle.baseURL, http.MethodGet, "/api/metrics", "", "")
-	cpu, mem, swapTotal, swapUsed, parseErr := parseMetrics(body)
+	cpu, mem, swapTotal, swapUsed, diskTotal, diskUsed, parseErr := parseMetrics(body)
 	resp := &Response{
 		BaseURL:    handle.baseURL,
 		HTTPStatus: status,
@@ -382,6 +405,8 @@ func runMetricsFetch(t *testing.T, binary string, req *Request) *Response {
 		resp.MEMPercent = mem
 		resp.SwapTotalBytes = swapTotal
 		resp.SwapUsedBytes = swapUsed
+		resp.DiskTotalBytes = diskTotal
+		resp.DiskUsedBytes = diskUsed
 	} else {
 		resp.Error = parseErr.Error()
 	}
@@ -393,7 +418,7 @@ func runMetricsTick(t *testing.T, binary string, req *Request) *Response {
 	handle := ensureDaemon(t, binary, req)
 
 	_, body1 := doHTTP(t, handle.baseURL, http.MethodGet, "/api/metrics", "", "")
-	beforeCPU, beforeMEM, beforeSwapTotal, beforeSwapUsed, err1 := parseMetrics(body1)
+	beforeCPU, beforeMEM, beforeSwapTotal, beforeSwapUsed, beforeDiskTotal, beforeDiskUsed, err1 := parseMetrics(body1)
 	if err1 != nil {
 		t.Fatalf("parse before metrics: %v body=%q", err1, body1)
 	}
@@ -404,7 +429,7 @@ func runMetricsTick(t *testing.T, binary string, req *Request) *Response {
 	}
 
 	status2, body2 := doHTTP(t, handle.baseURL, http.MethodGet, "/api/metrics", "", "")
-	afterCPU, afterMEM, afterSwapTotal, afterSwapUsed, err2 := parseMetrics(body2)
+	afterCPU, afterMEM, afterSwapTotal, afterSwapUsed, afterDiskTotal, afterDiskUsed, err2 := parseMetrics(body2)
 	if err2 != nil {
 		t.Fatalf("parse after metrics: %v body=%q", err2, body2)
 	}
@@ -414,10 +439,14 @@ func runMetricsTick(t *testing.T, binary string, req *Request) *Response {
 		BeforeMEM:       beforeMEM,
 		BeforeSwapTotal: beforeSwapTotal,
 		BeforeSwapUsed:  beforeSwapUsed,
+		BeforeDiskTotal: beforeDiskTotal,
+		BeforeDiskUsed:  beforeDiskUsed,
 		AfterCPU:        afterCPU,
 		AfterMEM:        afterMEM,
 		AfterSwapTotal:  afterSwapTotal,
 		AfterSwapUsed:   afterSwapUsed,
+		AfterDiskTotal:  afterDiskTotal,
+		AfterDiskUsed:   afterDiskUsed,
 	})
 
 	return &Response{
@@ -428,6 +457,8 @@ func runMetricsTick(t *testing.T, binary string, req *Request) *Response {
 		MEMPercent:     afterMEM,
 		SwapTotalBytes: afterSwapTotal,
 		SwapUsedBytes:  afterSwapUsed,
+		DiskTotalBytes: afterDiskTotal,
+		DiskUsedBytes:  afterDiskUsed,
 		StateDir:       handle.stateDir,
 		Error:          "",
 	}
@@ -445,12 +476,14 @@ func runHTTPSequence(t *testing.T, binary string, req *Request) *Response {
 		resp.HTTPStatus = status
 		resp.HTTPBody = body
 		if step.Path == "/api/metrics" {
-			cpu, mem, swapTotal, swapUsed, err := parseMetrics(body)
+			cpu, mem, swapTotal, swapUsed, diskTotal, diskUsed, err := parseMetrics(body)
 			if err == nil {
 				resp.CPUPercent = cpu
 				resp.MEMPercent = mem
 				resp.SwapTotalBytes = swapTotal
 				resp.SwapUsedBytes = swapUsed
+				resp.DiskTotalBytes = diskTotal
+				resp.DiskUsedBytes = diskUsed
 			}
 		}
 	}
@@ -468,12 +501,14 @@ func runHTTPRequest(t *testing.T, binary string, req *Request) *Response {
 		StateDir:   handle.stateDir,
 	}
 	if req.HTTPPath == "/api/metrics" {
-		cpu, mem, swapTotal, swapUsed, err := parseMetrics(body)
+		cpu, mem, swapTotal, swapUsed, diskTotal, diskUsed, err := parseMetrics(body)
 		if err == nil {
 			resp.CPUPercent = cpu
 			resp.MEMPercent = mem
 			resp.SwapTotalBytes = swapTotal
 			resp.SwapUsedBytes = swapUsed
+			resp.DiskTotalBytes = diskTotal
+			resp.DiskUsedBytes = diskUsed
 		}
 	}
 	return resp
@@ -490,6 +525,34 @@ func runFormatSwapDisplay(t *testing.T, req *Request) *Response {
 	t.Helper()
 	return &Response{
 		FormatResult: monitor.FormatSwapDisplay(req.FormatSwapTotal, req.FormatSwapUsed),
+	}
+}
+
+func runFormatDiskBytes(t *testing.T, req *Request) *Response {
+	t.Helper()
+	return &Response{
+		FormatResult: monitor.FormatDiskBytesDecimal(req.FormatBytesInput),
+	}
+}
+
+func runFormatDiskBytesBinaryUsed(t *testing.T, req *Request) *Response {
+	t.Helper()
+	return &Response{
+		FormatResult: monitor.FormatDiskBytesBinaryUsed(req.FormatBytesInput),
+	}
+}
+
+func runFormatDiskBytesBinaryTotal(t *testing.T, req *Request) *Response {
+	t.Helper()
+	return &Response{
+		FormatResult: monitor.FormatDiskBytesBinaryTotal(req.FormatBytesInput),
+	}
+}
+
+func runFormatDiskDisplay(t *testing.T, req *Request) *Response {
+	t.Helper()
+	return &Response{
+		FormatResult: monitor.FormatDiskDisplay(req.FormatDiskTotal, req.FormatDiskUsed),
 	}
 }
 
@@ -523,6 +586,14 @@ func Run(t *testing.T, req *Request) (*Response, error) {
 		return runFormatBytes(t, req), nil
 	case actionFormatSwapDisplay:
 		return runFormatSwapDisplay(t, req), nil
+	case actionFormatDiskBytes:
+		return runFormatDiskBytes(t, req), nil
+	case actionFormatDiskBytesBinaryUsed:
+		return runFormatDiskBytesBinaryUsed(t, req), nil
+	case actionFormatDiskBytesBinaryTotal:
+		return runFormatDiskBytesBinaryTotal(t, req), nil
+	case actionFormatDiskDisplay:
+		return runFormatDiskDisplay(t, req), nil
 	case actionHTTPSequence:
 		return runHTTPSequence(t, binary, req), nil
 	case actionHTTPRequest, "":

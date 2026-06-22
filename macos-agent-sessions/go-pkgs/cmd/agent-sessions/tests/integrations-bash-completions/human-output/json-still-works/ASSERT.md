@@ -1,0 +1,44 @@
+## Expected
+
+- `resp.ExitCode == 0`.
+- `resp.Stdout` is valid JSON with an `integrations` array of length 4.
+- Integration IDs include grok, opencode, pi, and codex.
+- `resp.Stdout` does not contain human table header `Integrations (`.
+
+## Exit Code
+
+- `0`
+
+```go
+func Assert(t *testing.T, req *Request, resp *Response, err error) {
+	if err != nil {
+		t.Fatalf("Run returned unexpected error: %v", err)
+	}
+	if resp.ExitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d; stderr=%q", resp.ExitCode, resp.Stderr)
+	}
+
+	if strings.Contains(resp.Stdout, "Integrations (") {
+		t.Fatalf("JSON mode stdout must not contain human table header; got:\n%s", resp.Stdout)
+	}
+
+	out := parseIntegrationsJSON(t, resp.Stdout)
+	if len(out.Integrations) != 4 {
+		t.Fatalf("expected 4 integrations, got %d: %v", len(out.Integrations), out.Integrations)
+	}
+
+	wantIDs := map[string]bool{"grok": false, "opencode": false, "pi": false, "codex": false}
+	for _, entry := range out.Integrations {
+		if _, ok := wantIDs[entry.ID]; ok {
+			wantIDs[entry.ID] = true
+		}
+	}
+	for id, found := range wantIDs {
+		if !found {
+			t.Fatalf("integrations JSON missing id %q; got %v", id, out.Integrations)
+		}
+	}
+
+	t.Logf("human-output/json-still-works OK: ids=%v", out.Integrations)
+}
+```

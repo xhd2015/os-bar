@@ -12,7 +12,7 @@ APP_NAME="os-bar"
 SOURCE_APP="$MACOS_DIR/$APP_NAME.app"
 INSTALL_ROOT="${INSTALL_ROOT:-/Applications}"
 TARGET_APP="$INSTALL_ROOT/$APP_NAME.app"
-OPEN_AFTER_INSTALL=0
+OPEN_AFTER_INSTALL=1
 
 usage() {
     cat <<EOF
@@ -21,19 +21,24 @@ Usage: $(basename "$0") [options]
 Build os-bar.app (via bundle.sh) and install to $INSTALL_ROOT.
 
 Options:
-  --open          Launch os-bar after install
+  --no-open       Skip launching os-bar after install
+  --open          Launch os-bar after install (default)
   --install-root  Override install directory (default: /Applications)
   -h, --help      Show this help
 
 Examples:
   ./script/install.sh
-  ./script/install.sh --open
+  ./script/install.sh --no-open
   INSTALL_ROOT=\$HOME/Applications ./script/install.sh
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --no-open)
+            OPEN_AFTER_INSTALL=0
+            shift
+            ;;
         --open)
             OPEN_AFTER_INSTALL=1
             shift

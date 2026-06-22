@@ -18,32 +18,34 @@ port (default production port `38270`).
 
 A **metrics provider** (`go-pkgs/monitor`) supplies point-in-time CPU and MEM
 percentages plus **swap stats** (`SwapTotal`, `SwapUsed` bytes from
-`mem.VirtualMemory()` on macOS). In **mock mode** (`--mock-metrics`), the
-provider returns deterministic tick-table values and exposes
-`POST /api/test/advance-tick` to advance to the next snapshot (parity with
-Swift `MockSystemInfoProvider`).
+`mem.VirtualMemory()` on macOS) and **disk stats** (`DiskTotal`, `DiskUsed`
+bytes from `disk.Usage("/")` on the root volume). In **mock mode**
+(`--mock-metrics`), the provider returns deterministic tick-table values and
+exposes `POST /api/test/advance-tick` to advance to the next snapshot (parity
+with Swift `MockSystemInfoProvider`).
 
 **CLI clients** (`os-bar metrics`) and **test harness HTTP clients** talk
 to the daemon over JSON REST. A **metrics snapshot** is
-`{cpu_percent, mem_percent, swap_total_bytes, swap_used_bytes}` — CPU/MEM
-are `float64` in `[0.0, 100.0]`; swap fields are `uint64` with
-`0 <= swap_used_bytes <= swap_total_bytes`.
+`{cpu_percent, mem_percent, swap_total_bytes, swap_used_bytes, disk_total_bytes, disk_used_bytes}` — CPU/MEM are `float64` in `[0.0, 100.0]`; swap and
+disk fields are `uint64` with `0 <= used_bytes <= total_bytes`.
 
-A **format helper** (`monitor.FormatBytes`, `monitor.FormatSwapDisplay`)
-converts raw byte counts to binary integer labels (`2GB`, `100MB`, `0B`) for
-dropdown display; formatting is client-side in production but tested via the
-shared Go helpers from the same harness.
+A **format helper** (`monitor.FormatBytes`, `monitor.FormatSwapDisplay`,
+`monitor.FormatDiskBytesBinaryUsed`, `FormatDiskBytesBinaryTotal`,
+`FormatDiskBytesDecimal`, `FormatDiskDisplay`) converts raw byte counts for
+dropdown display. Disk shows both 1024-based (`454.35GB/460GB`) and decimal
+(`488.06GB/494.38GB on MacOS Settings`) sizes. Formatting is client-side in
+production but tested via the shared Go helpers from the same harness.
 
 On disk under the state dir (`$HOME/.os-bar/os-bar/`, overridable via
 `--state-dir` or `OS_BAR_STATE_DIR`): `daemon.pid` only. No metrics history.
 
 Mock tick table:
 
-| Tick | CPU % | MEM % | swap_total_bytes | swap_used_bytes |
-|------|-------|-------|------------------|-----------------|
-| 0 | 45.2 | 72.8 | 2147483648 (2 GB) | 104857600 (100 MB) |
-| 1 | 52.3 | 68.1 | 2147483648 (2 GB) | 157286400 (150 MB) |
-| 2+ | 38.7 | 75.4 | 4294967296 (4 GB) | 209715200 (200 MB) |
+| Tick | CPU % | MEM % | swap_total_bytes | swap_used_bytes | disk_total_bytes | disk_used_bytes |
+|------|-------|-------|------------------|-----------------|------------------|-----------------|
+| 0 | 45.2 | 72.8 | 2147483648 (2 GB) | 104857600 (100 MB) | 536870912000 (500 GiB) | 214748364800 (200 GiB) |
+| 1 | 52.3 | 68.1 | 2147483648 (2 GB) | 157286400 (150 MB) | 536870912000 (500 GiB) | 241591910400 (225 GiB) |
+| 2+ | 38.7 | 75.4 | 4294967296 (4 GB) | 209715200 (200 MB) | 1099511627776 (1 TiB) | 429496729600 (400 GiB) |
 
 ## Decision Tree
 
@@ -76,11 +78,22 @@ server/tests/                                 ROOT: Request{Action, Port, StateD
     │   ├── swap-bytes-valid/                 LEAF: 0 <= used <= total
     │   └── swap-refresh-on-tick/             LEAF: tick 0→1 swap used changes, total stable
     │
-    └── swap-format/                          DECISION: concern = swap display formatting
-        ├── swap-format-total/                LEAF: FormatBytes(2 GiB) → "2GB"
-        ├── swap-format-used/                 LEAF: FormatBytes(100 MiB) → "100MB"
-        ├── swap-format-zero/                 LEAF: FormatBytes(0) → "0B"
-        └── swap-format-display/              LEAF: FormatSwapDisplay → "2GB 100MB"
+    ├── swap-format/                          DECISION: concern = swap display formatting
+    │   ├── swap-format-total/                LEAF: FormatBytes(2 GiB) → "2GB"
+    │   ├── swap-format-used/                 LEAF: FormatBytes(100 MiB) → "100MB"
+    │   ├── swap-format-zero/                 LEAF: FormatBytes(0) → "0B"
+    │   └── swap-format-display/              LEAF: FormatSwapDisplay → "5% (100MB/2GB)"
+    │
+    ├── disk-api/                             DECISION: concern = disk HTTP API fields
+    │   ├── disk-bytes-present/               LEAF: tick 0 disk fields present
+    │   ├── disk-bytes-valid/                 LEAF: 0 <= used <= total
+    │   └── disk-refresh-on-tick/             LEAF: tick 0→1 disk used changes, total stable
+    │
+    └── disk-format/                          DECISION: concern = disk display formatting
+        ├── disk-format-total/                LEAF: FormatDiskBytesBinaryTotal(500 GiB) → "500GB"
+        ├── disk-format-used/                 LEAF: FormatDiskBytesBinaryUsed(200 GiB) → "200.00GB"
+        ├── disk-format-zero/                 LEAF: FormatDiskBytesDecimal(0) → "0B"
+        └── disk-format-display/              LEAF: FormatDiskDisplay → dual 1024 + decimal line
 ```
 
 ## Parameter Ranking
@@ -88,8 +101,8 @@ server/tests/                                 ROOT: Request{Action, Port, StateD
 | Rank | Parameter | Branches |
 |------|-----------|----------|
 | 1 | Concern group | lifecycle, metrics-api |
-| 2 | Swap concern | api (HTTP fields), format (FormatBytes helpers) |
-| 3 | Action | metrics_fetch, metrics_tick, format_bytes, format_swap_display, ... |
+| 2 | Resource concern | swap-api, swap-format, disk-api, disk-format |
+| 3 | Action | metrics_fetch, metrics_tick, format_bytes, format_swap_display, format_disk_display, ... |
 | 4 | MockMetrics | true (API leaves), N/A (format leaves) |
 | 5 | Tick state | 0 (present/valid/format), 0→1 (refresh) |
 | 6 | Format input | total bytes, used bytes, zero, display pair |
@@ -111,7 +124,14 @@ server/tests/                                 ROOT: Request{Action, Port, StateD
 | 10 | `metrics-api/swap-format/swap-format-total/` | `FormatBytes(2147483648)` → `"2GB"` |
 | 11 | `metrics-api/swap-format/swap-format-used/` | `FormatBytes(104857600)` → `"100MB"` |
 | 12 | `metrics-api/swap-format/swap-format-zero/` | `FormatBytes(0)` → `"0B"` |
-| 13 | `metrics-api/swap-format/swap-format-display/` | `FormatSwapDisplay(2147483648, 104857600)` → `"2GB 100MB"` |
+| 13 | `metrics-api/swap-format/swap-format-display/` | `FormatSwapDisplay(2147483648, 104857600)` → `"5% (100MB/2GB)"` |
+| 14 | `metrics-api/disk-api/disk-bytes-present/` | `GET /api/metrics` includes disk fields at mock tick 0 |
+| 15 | `metrics-api/disk-api/disk-bytes-valid/` | `0 <= disk_used_bytes <= disk_total_bytes` |
+| 16 | `metrics-api/disk-api/disk-refresh-on-tick/` | advance-tick: used 214748364800→241591910400, total stays 536870912000 |
+| 17 | `metrics-api/disk-format/disk-format-total/` | `FormatDiskBytesBinaryTotal(536870912000)` → `"500GB"` |
+| 18 | `metrics-api/disk-format/disk-format-used/` | `FormatDiskBytesBinaryUsed(214748364800)` → `"200.00GB"` |
+| 19 | `metrics-api/disk-format/disk-format-zero/` | `FormatDiskBytesDecimal(0)` → `"0B"` |
+| 20 | `metrics-api/disk-format/disk-format-display/` | `FormatDiskDisplay(...)` → `"40% (200.00GB/500GB, 214.75GB/536.87GB on MacOS Settings)"` |
 
 ## How to Run
 
