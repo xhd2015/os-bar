@@ -2,7 +2,52 @@ import Foundation
 
 final class SystemMonitor: ObservableObject {
     @Published var cpuPercent: Double = 0
+    @Published var cpuCores: Int = 0
     @Published var memPercent: Double = 0
+    @Published var memTotalBytes: UInt64 = 0
+    @Published var memUsedBytes: UInt64 = 0
+    @Published var swapTotalBytes: UInt64 = 0
+    @Published var swapUsedBytes: UInt64 = 0
+
+    var cpuDisplay: String {
+        if cpuCores <= 0 {
+            return "\(Int(cpuPercent.rounded()))%"
+        }
+        return "\(Int(cpuPercent.rounded()))% (\(cpuCores) cores)"
+    }
+
+    var memDisplay: String {
+        Self.formatMemDisplay(total: memTotalBytes, used: memUsedBytes)
+    }
+
+    var swapDisplay: String {
+        Self.formatSwapDisplay(total: swapTotalBytes, used: swapUsedBytes)
+    }
+
+    private static func formatMemDisplay(total: UInt64, used: UInt64) -> String {
+        if total == 0 { return "0% (0B/0B)" }
+        let percent = (used * 100 + total / 2) / total
+        return "\(percent)% (\(formatBytes(used))/\(formatBytes(total)))"
+    }
+
+    private static func formatSwapDisplay(total: UInt64, used: UInt64) -> String {
+        if total == 0 { return "0% (0B/0B)" }
+        let percent = (used * 100 + total / 2) / total
+        return "\(percent)% (\(formatBytes(used))/\(formatBytes(total)))"
+    }
+
+    private static func formatBytes(_ bytes: UInt64) -> String {
+        if bytes == 0 { return "0B" }
+        let gib: UInt64 = 1024 * 1024 * 1024
+        let mib: UInt64 = 1024 * 1024
+        if bytes >= gib {
+            return "\(bytes / gib)GB"
+        }
+        if bytes >= mib {
+            return "\(bytes / mib)MB"
+        }
+        return "\(bytes)B"
+    }
 
     private let client: DaemonClient
     private var timer: Timer?
@@ -35,7 +80,12 @@ final class SystemMonitor: ObservableObject {
         do {
             let snapshot = try await client.metrics()
             cpuPercent = snapshot.cpuPercent
+            cpuCores = snapshot.cpuCores
             memPercent = snapshot.memPercent
+            memTotalBytes = snapshot.memTotalBytes
+            memUsedBytes = snapshot.memUsedBytes
+            swapTotalBytes = snapshot.swapTotalBytes
+            swapUsedBytes = snapshot.swapUsedBytes
         } catch {
             print("Failed to fetch metrics: \(error)")
         }

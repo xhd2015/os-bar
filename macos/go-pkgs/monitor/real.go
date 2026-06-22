@@ -22,12 +22,49 @@ func (r *RealProvider) CPUPercent() float64 {
 	return percents[0]
 }
 
-// MEMPercent returns memory utilization as (active + wired) / physical * 100.
-func (r *RealProvider) MEMPercent() float64 {
-	vm, err := mem.VirtualMemory()
-	if err != nil || vm.Total == 0 {
+// CPUCores returns the number of logical CPUs.
+func (r *RealProvider) CPUCores() int {
+	n, err := cpu.Counts(true)
+	if err != nil {
 		return 0
 	}
-	used := vm.Active + vm.Wired
-	return float64(used) / float64(vm.Total) * 100.0
+	return n
+}
+
+// MEMPercent returns memory pressure as (total - available) / physical * 100.
+// Matches gopsutil UsedPercent: accounts for active, wired, compressed, etc.
+// Inactive/cache remain in Available — RAM the kernel can reclaim for new apps.
+func (r *RealProvider) MEMPercent() float64 {
+	vm, err := mem.VirtualMemory()
+	if err != nil {
+		return 0
+	}
+	return vm.UsedPercent
+}
+
+// MEMStats returns physical memory total and used bytes.
+// Used = total - available (not free for new workloads without reclaiming pages).
+func (r *RealProvider) MEMStats() MemStats {
+	vm, err := mem.VirtualMemory()
+	if err != nil {
+		return MemStats{}
+	}
+	used := vm.Used
+	if used == 0 && vm.Total > vm.Available {
+		used = vm.Total - vm.Available
+	}
+	return MemStats{
+		TotalBytes: vm.Total,
+		UsedBytes:  used,
+	}
+}
+
+// SwapStats returns total and used swap space from the OS.
+// On darwin, VirtualMemory does not include swap; use SwapMemory (sysctl vm.swapusage).
+func (r *RealProvider) SwapStats() SwapStats {
+	swap, err := mem.SwapMemory()
+	if err != nil {
+		return SwapStats{}
+	}
+	return SwapStats{TotalBytes: swap.Total, UsedBytes: swap.Used}
 }

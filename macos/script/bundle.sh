@@ -61,6 +61,14 @@ PLIST
 echo "==> Ad-hoc code signing"
 codesign --force --deep -s - "$BUNDLE_DIR" 2>/dev/null || true
 
+echo ""
+echo "==> App bundle ready: $BUNDLE_DIR"
+
+if [[ "${BUNDLE_SKIP_DMG:-}" == "1" ]]; then
+    echo "    (DMG skipped — set BUNDLE_SKIP_DMG=0 or unset to create os-bar.dmg)"
+    exit 0
+fi
+
 # Package for distribution
 DMG_PATH="$MACOS_DIR/$APP_NAME.dmg"
 STAGING="$MACOS_DIR/.dmg-staging"
@@ -83,7 +91,11 @@ rm -rf "$STAGING"
 
 echo ""
 echo "==> Done:"
+echo "    App:  $BUNDLE_DIR"
 echo "    DMG:  $DMG_PATH"
+echo ""
+echo "    To install on this machine without dragging:"
+echo "      ./script/install.sh"
 echo ""
 echo "    To install on another machine:"
 echo "      1. Copy os-bar.dmg to target machine"

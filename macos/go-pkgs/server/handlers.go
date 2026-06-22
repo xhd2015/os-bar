@@ -63,10 +63,27 @@ func (d *daemon) handleNotFound(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
-func (d *daemon) metricsPayload() map[string]float64 {
-	return map[string]float64{
-		"cpu_percent": d.provider.CPUPercent(),
-		"mem_percent": d.provider.MEMPercent(),
+type metricsPayload struct {
+	CPUPercent     float64 `json:"cpu_percent"`
+	CPUCores       int     `json:"cpu_cores"`
+	MEMPercent     float64 `json:"mem_percent"`
+	MemTotalBytes  uint64  `json:"mem_total_bytes"`
+	MemUsedBytes   uint64  `json:"mem_used_bytes"`
+	SwapTotalBytes uint64  `json:"swap_total_bytes"`
+	SwapUsedBytes  uint64  `json:"swap_used_bytes"`
+}
+
+func (d *daemon) metricsPayload() metricsPayload {
+	mem := d.provider.MEMStats()
+	swap := d.provider.SwapStats()
+	return metricsPayload{
+		CPUPercent:     d.provider.CPUPercent(),
+		CPUCores:       d.provider.CPUCores(),
+		MEMPercent:     d.provider.MEMPercent(),
+		MemTotalBytes:  mem.TotalBytes,
+		MemUsedBytes:   mem.UsedBytes,
+		SwapTotalBytes: swap.TotalBytes,
+		SwapUsedBytes:  swap.UsedBytes,
 	}
 }
 

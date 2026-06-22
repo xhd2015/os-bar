@@ -22,8 +22,9 @@ struct os_barApp: App {
     var body: some Scene {
         MenuBarExtra {
             VStack(alignment: .leading, spacing: 4) {
-                Text("CPU: \(Int(monitor.cpuPercent.rounded()))%")
-                Text("Memory: \(Int(monitor.memPercent.rounded()))%")
+                Text("CPU: \(monitor.cpuDisplay)")
+                Text("Memory: \(monitor.memDisplay)")
+                Text("Swap: \(monitor.swapDisplay)")
 
                 Divider()
 

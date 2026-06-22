@@ -9,6 +9,7 @@ import (
 	"time"
 
 	lessflags "github.com/xhd2015/less-flags"
+	"github.com/xhd2015/os-bar/macos/go-pkgs/monitor"
 	"github.com/xhd2015/os-bar/macos/go-pkgs/server"
 )
 
@@ -64,7 +65,7 @@ func cmdMetrics(args []string) {
 
 	helpText := `Usage: os-bar-daemon metrics [flags]
 
-Fetch CPU and memory metrics from the running daemon.
+Fetch CPU, memory, and swap metrics from the running daemon.
 
 Flags:
   --json      output raw JSON
@@ -104,14 +105,20 @@ Flags:
 	}
 
 	var metrics struct {
-		CPUPercent float64 `json:"cpu_percent"`
-		MEMPercent float64 `json:"mem_percent"`
+		CPUPercent     float64 `json:"cpu_percent"`
+		CPUCores       int     `json:"cpu_cores"`
+		MEMPercent     float64 `json:"mem_percent"`
+		MemTotalBytes  uint64  `json:"mem_total_bytes"`
+		MemUsedBytes   uint64  `json:"mem_used_bytes"`
+		SwapTotalBytes uint64  `json:"swap_total_bytes"`
+		SwapUsedBytes  uint64  `json:"swap_used_bytes"`
 	}
 	if err := json.Unmarshal(body, &metrics); err != nil {
 		fmt.Fprintf(os.Stderr, "error: parse metrics: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("CPU: %.1f%%\n", metrics.CPUPercent)
-	fmt.Printf("Memory: %.1f%%\n", metrics.MEMPercent)
+	fmt.Printf("CPU: %s\n", monitor.FormatCPUDisplay(metrics.CPUPercent, metrics.CPUCores))
+	fmt.Printf("Memory: %s\n", monitor.FormatMemDisplay(metrics.MemTotalBytes, metrics.MemUsedBytes))
+	fmt.Printf("Swap: %s\n", monitor.FormatSwapDisplay(metrics.SwapTotalBytes, metrics.SwapUsedBytes))
 }

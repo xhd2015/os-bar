@@ -7,9 +7,13 @@
 doctest Run(req) -> build CLI -> serve --state-dir --port --mock-metrics -> server -> daemon
 
 # HTTP client exercises metrics REST API
-doctest <- GET /api/metrics (cpu_percent, mem_percent)
+doctest <- GET /api/metrics (cpu_percent, mem_percent, swap_total_bytes, swap_used_bytes)
 doctest -> POST /api/test/advance-tick -> mock provider advances tick
 doctest <- GET /api/health | /api/info
+
+# formatter helpers (no daemon)
+doctest -> monitor.FormatBytes(bytes) -> "2GB" | "100MB" | "0B"
+doctest -> monitor.FormatSwapDisplay(total, used) -> "89%(8GB/9GB)"
 ```
 
 ## Preconditions
@@ -33,15 +37,20 @@ doctest <- GET /api/health | /api/info
    - `http_request` — ensure daemon running, perform one HTTP call
    - `http_sequence` — ensure daemon running, perform `req.HTTPSteps` in order
    - `daemon_singleton` — start twice, assert second exits 0
-   - `metrics_fetch` — `GET /api/metrics`, parse into `CPUPercent` / `MEMPercent`
-   - `metrics_tick` — `GET /api/metrics`, `POST /api/test/advance-tick`, `GET /api/metrics`; encode before/after in `HTTPBody`
-5. Parse `/api/metrics` JSON into `Response.CPUPercent` / `Response.MEMPercent`.
+   - `metrics_fetch` — `GET /api/metrics`, parse into `CPUPercent` / `MEMPercent` / swap bytes
+   - `metrics_tick` — `GET /api/metrics`, `POST /api/test/advance-tick`, `GET /api/metrics`; encode before/after CPU/MEM/swap in `HTTPBody`
+   - `format_bytes` — call `monitor.FormatBytes(req.FormatBytesInput)`, store in `FormatResult`
+   - `format_swap_display` — call `monitor.FormatSwapDisplay(req.FormatSwapTotal, req.FormatSwapUsed)`, store in `FormatResult`
+5. Parse `/api/metrics` JSON into `Response.CPUPercent` / `Response.MEMPercent` / swap byte fields.
 6. Return `(*Response, nil)`.
 
 ## Context
 
-- Metrics response: `{"cpu_percent": float64, "mem_percent": float64}` both in `[0.0, 100.0]`.
-- Mock tick 0: CPU=45.2, MEM=72.8; tick 1: CPU=52.3, MEM=68.1; tick 2+: CPU=38.7, MEM=75.4.
+- Metrics response: `{"cpu_percent": float64, "mem_percent": float64, "swap_total_bytes": uint64, "swap_used_bytes": uint64}`; CPU/MEM in `[0.0, 100.0]`.
+- Mock tick 0: CPU=45.2, MEM=72.8, swap total=2147483648, swap used=104857600.
+- Mock tick 1: CPU=52.3, MEM=68.1, swap total=2147483648, swap used=157286400.
+- Mock tick 2+: CPU=38.7, MEM=75.4, swap total=4294967296, swap used=209715200.
+- `FormatBytes` / `FormatSwapDisplay`: binary (1024) units, integer labels only (`2GB`, `100MB`, `0B`).
 - `POST /api/test/advance-tick` returns 403 when not in mock mode.
 - Error parity: unknown path → 404, wrong method on known path → 405.
 - Singleton: second `serve` exits 0 if existing PID alive and `/api/health` OK.
@@ -62,6 +71,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/xhd2015/os-bar/macos/go-pkgs/monitor"
 )
 
 const (
@@ -70,8 +81,10 @@ const (
 	actionHTTPRequest     = "http_request"
 	actionHTTPSequence    = "http_sequence"
 	actionDaemonSingleton = "daemon_singleton"
-	actionMetricsFetch    = "metrics_fetch"
-	actionMetricsTick     = "metrics_tick"
+	actionMetricsFetch       = "metrics_fetch"
+	actionMetricsTick        = "metrics_tick"
+	actionFormatBytes        = "format_bytes"
+	actionFormatSwapDisplay  = "format_swap_display"
 
 	daemonReadyTimeout = 10 * time.Second
 	daemonReadyPoll    = 50 * time.Millisecond
@@ -87,10 +100,14 @@ type HTTPStep struct {
 
 // MetricsTickResult captures before/after snapshots for refresh-on-tick leaves.
 type MetricsTickResult struct {
-	BeforeCPU float64 `json:"before_cpu"`
-	BeforeMEM float64 `json:"before_mem"`
-	AfterCPU  float64 `json:"after_cpu"`
-	AfterMEM  float64 `json:"after_mem"`
+	BeforeCPU       float64 `json:"before_cpu"`
+	BeforeMEM       float64 `json:"before_mem"`
+	BeforeSwapTotal uint64  `json:"before_swap_total"`
+	BeforeSwapUsed  uint64  `json:"before_swap_used"`
+	AfterCPU        float64 `json:"after_cpu"`
+	AfterMEM        float64 `json:"after_mem"`
+	AfterSwapTotal  uint64  `json:"after_swap_total"`
+	AfterSwapUsed   uint64  `json:"after_swap_used"`
 }
 
 // Request drives daemon lifecycle and HTTP calls. Defined only at root.
@@ -103,7 +120,10 @@ type Request struct {
 	HTTPPath    string
 	HTTPBody    string
 	ContentType string
-	HTTPSteps   []HTTPStep
+	HTTPSteps        []HTTPStep
+	FormatBytesInput uint64
+	FormatSwapTotal  uint64
+	FormatSwapUsed   uint64
 }
 
 // Response captures daemon and HTTP outcomes.
@@ -113,6 +133,9 @@ type Response struct {
 	HTTPBody            string
 	CPUPercent          float64
 	MEMPercent          float64
+	SwapTotalBytes      uint64
+	SwapUsedBytes       uint64
+	FormatResult        string
 	PID                 int
 	SecondStartExitCode int
 	StateDir            string
@@ -291,15 +314,17 @@ func doHTTP(t *testing.T, baseURL string, method, path, body, contentType string
 	return resp.StatusCode, string(respBody)
 }
 
-func parseMetrics(body string) (cpu, mem float64, err error) {
+func parseMetrics(body string) (cpu, mem float64, swapTotal, swapUsed uint64, err error) {
 	var payload struct {
-		CPUPercent float64 `json:"cpu_percent"`
-		MEMPercent float64 `json:"mem_percent"`
+		CPUPercent     float64 `json:"cpu_percent"`
+		MEMPercent     float64 `json:"mem_percent"`
+		SwapTotalBytes uint64  `json:"swap_total_bytes"`
+		SwapUsedBytes  uint64  `json:"swap_used_bytes"`
 	}
 	if err = json.Unmarshal([]byte(body), &payload); err != nil {
-		return 0, 0, err
+		return 0, 0, 0, 0, err
 	}
-	return payload.CPUPercent, payload.MEMPercent, nil
+	return payload.CPUPercent, payload.MEMPercent, payload.SwapTotalBytes, payload.SwapUsedBytes, nil
 }
 
 func runSingleton(t *testing.T, binary string, req *Request) *Response {
@@ -345,7 +370,7 @@ func runMetricsFetch(t *testing.T, binary string, req *Request) *Response {
 	t.Helper()
 	handle := ensureDaemon(t, binary, req)
 	status, body := doHTTP(t, handle.baseURL, http.MethodGet, "/api/metrics", "", "")
-	cpu, mem, parseErr := parseMetrics(body)
+	cpu, mem, swapTotal, swapUsed, parseErr := parseMetrics(body)
 	resp := &Response{
 		BaseURL:    handle.baseURL,
 		HTTPStatus: status,
@@ -355,6 +380,8 @@ func runMetricsFetch(t *testing.T, binary string, req *Request) *Response {
 	if parseErr == nil {
 		resp.CPUPercent = cpu
 		resp.MEMPercent = mem
+		resp.SwapTotalBytes = swapTotal
+		resp.SwapUsedBytes = swapUsed
 	} else {
 		resp.Error = parseErr.Error()
 	}
@@ -366,7 +393,7 @@ func runMetricsTick(t *testing.T, binary string, req *Request) *Response {
 	handle := ensureDaemon(t, binary, req)
 
 	_, body1 := doHTTP(t, handle.baseURL, http.MethodGet, "/api/metrics", "", "")
-	beforeCPU, beforeMEM, err1 := parseMetrics(body1)
+	beforeCPU, beforeMEM, beforeSwapTotal, beforeSwapUsed, err1 := parseMetrics(body1)
 	if err1 != nil {
 		t.Fatalf("parse before metrics: %v body=%q", err1, body1)
 	}
@@ -377,26 +404,32 @@ func runMetricsTick(t *testing.T, binary string, req *Request) *Response {
 	}
 
 	status2, body2 := doHTTP(t, handle.baseURL, http.MethodGet, "/api/metrics", "", "")
-	afterCPU, afterMEM, err2 := parseMetrics(body2)
+	afterCPU, afterMEM, afterSwapTotal, afterSwapUsed, err2 := parseMetrics(body2)
 	if err2 != nil {
 		t.Fatalf("parse after metrics: %v body=%q", err2, body2)
 	}
 
 	tickResult, _ := json.Marshal(MetricsTickResult{
-		BeforeCPU: beforeCPU,
-		BeforeMEM: beforeMEM,
-		AfterCPU:  afterCPU,
-		AfterMEM:  afterMEM,
+		BeforeCPU:       beforeCPU,
+		BeforeMEM:       beforeMEM,
+		BeforeSwapTotal: beforeSwapTotal,
+		BeforeSwapUsed:  beforeSwapUsed,
+		AfterCPU:        afterCPU,
+		AfterMEM:        afterMEM,
+		AfterSwapTotal:  afterSwapTotal,
+		AfterSwapUsed:   afterSwapUsed,
 	})
 
 	return &Response{
-		BaseURL:    handle.baseURL,
-		HTTPStatus: status2,
-		HTTPBody:   string(tickResult),
-		CPUPercent: afterCPU,
-		MEMPercent: afterMEM,
-		StateDir:   handle.stateDir,
-		Error:      "",
+		BaseURL:        handle.baseURL,
+		HTTPStatus:     status2,
+		HTTPBody:       string(tickResult),
+		CPUPercent:     afterCPU,
+		MEMPercent:     afterMEM,
+		SwapTotalBytes: afterSwapTotal,
+		SwapUsedBytes:  afterSwapUsed,
+		StateDir:       handle.stateDir,
+		Error:          "",
 	}
 }
 
@@ -412,10 +445,12 @@ func runHTTPSequence(t *testing.T, binary string, req *Request) *Response {
 		resp.HTTPStatus = status
 		resp.HTTPBody = body
 		if step.Path == "/api/metrics" {
-			cpu, mem, err := parseMetrics(body)
+			cpu, mem, swapTotal, swapUsed, err := parseMetrics(body)
 			if err == nil {
 				resp.CPUPercent = cpu
 				resp.MEMPercent = mem
+				resp.SwapTotalBytes = swapTotal
+				resp.SwapUsedBytes = swapUsed
 			}
 		}
 	}
@@ -433,13 +468,29 @@ func runHTTPRequest(t *testing.T, binary string, req *Request) *Response {
 		StateDir:   handle.stateDir,
 	}
 	if req.HTTPPath == "/api/metrics" {
-		cpu, mem, err := parseMetrics(body)
+		cpu, mem, swapTotal, swapUsed, err := parseMetrics(body)
 		if err == nil {
 			resp.CPUPercent = cpu
 			resp.MEMPercent = mem
+			resp.SwapTotalBytes = swapTotal
+			resp.SwapUsedBytes = swapUsed
 		}
 	}
 	return resp
+}
+
+func runFormatBytes(t *testing.T, req *Request) *Response {
+	t.Helper()
+	return &Response{
+		FormatResult: monitor.FormatBytes(req.FormatBytesInput),
+	}
+}
+
+func runFormatSwapDisplay(t *testing.T, req *Request) *Response {
+	t.Helper()
+	return &Response{
+		FormatResult: monitor.FormatSwapDisplay(req.FormatSwapTotal, req.FormatSwapUsed),
+	}
 }
 
 func Run(t *testing.T, req *Request) (*Response, error) {
@@ -468,6 +519,10 @@ func Run(t *testing.T, req *Request) (*Response, error) {
 		return runMetricsFetch(t, binary, req), nil
 	case actionMetricsTick:
 		return runMetricsTick(t, binary, req), nil
+	case actionFormatBytes:
+		return runFormatBytes(t, req), nil
+	case actionFormatSwapDisplay:
+		return runFormatSwapDisplay(t, req), nil
 	case actionHTTPSequence:
 		return runHTTPSequence(t, binary, req), nil
 	case actionHTTPRequest, "":

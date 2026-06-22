@@ -19,11 +19,21 @@ enum DaemonClientError: LocalizedError {
 
 struct MetricsSnapshot: Decodable {
     let cpuPercent: Double
+    let cpuCores: Int
     let memPercent: Double
+    let memTotalBytes: UInt64
+    let memUsedBytes: UInt64
+    let swapTotalBytes: UInt64
+    let swapUsedBytes: UInt64
 
     enum CodingKeys: String, CodingKey {
         case cpuPercent = "cpu_percent"
+        case cpuCores = "cpu_cores"
         case memPercent = "mem_percent"
+        case memTotalBytes = "mem_total_bytes"
+        case memUsedBytes = "mem_used_bytes"
+        case swapTotalBytes = "swap_total_bytes"
+        case swapUsedBytes = "swap_used_bytes"
     }
 }
 
