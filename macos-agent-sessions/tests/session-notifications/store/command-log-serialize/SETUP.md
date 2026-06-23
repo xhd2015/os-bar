@@ -1,3 +1,11 @@
+# Scenario
+
+**Feature**: command log encode decode round-trip
+
+```
+log_command_roundtrip -> decoded fields match
+```
+
 ## Steps
 1. Call `Run(t, req)` with `action: "log_command_test"` and command log fields populated.
 2. Capture the `Response` with the encoded JSON and decoded values.

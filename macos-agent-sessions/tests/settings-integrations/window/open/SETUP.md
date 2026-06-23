@@ -1,3 +1,5 @@
+# Scenario
+
 ## Steps
 1. Launch app with `-uiTestingOpenSettings` and capture Integrations window layout.
 

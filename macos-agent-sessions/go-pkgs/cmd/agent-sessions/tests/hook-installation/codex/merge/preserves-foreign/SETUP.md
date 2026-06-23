@@ -1,3 +1,5 @@
+# Scenario
+
 ## Steps
 1. Load `testdata/codex-foreign-hooks.json` into `PreExistingHooksJSON`.
 2. Call `Run(t, req)` with `Target: "codex"`, local install.

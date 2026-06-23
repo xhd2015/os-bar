@@ -141,6 +141,12 @@ struct Request: Codable {
     let log_stdout: String?
     let log_stderr: String?
     let log_duration_ms: Int?
+    // --- macos-notification test fields ---
+    let previous_json: String?
+    let current_json: String?
+    let is_baseline: Bool?
+    let home: String?
+    let cwd: String?
 }
 
 // MARK: - JSON Response to test framework
@@ -161,6 +167,14 @@ struct Response: Codable {
     var relative_time: String = ""
     var error: String = ""
     var log_entry_json: String = ""
+    // --- macos-notification response fields ---
+    var notify_dirs: [String] = []
+    var title: String = ""
+    var body: String = ""
+    var subtitle: String = ""
+    var user_info_dir: String = ""
+    var opened_dir: String = ""
+    var consumed_dir: String = ""
 }
 
 // MARK: - ISO8601 Date Helpers
@@ -200,6 +214,129 @@ func eventsToResponse(_ events: [SessionEvent]) -> [EventResponse] {
             consumed: ev.consumed
         )
     }
+}
+
+// MARK: - Session Notification Logic (mirrors production SessionNotificationLogic)
+
+struct DirTimestampPair: Hashable {
+    let dir: String
+    let timestamp: Date
+}
+
+struct SessionNotificationContent {
+    let title: String
+    let body: String
+    let subtitle: String
+    let userInfoDir: String
+}
+
+enum TestSessionNotificationLogic {
+    static let title = "Agent session finished"
+
+    static func dirsNeedingNotification(
+        previous: [SessionEvent],
+        current: [SessionEvent],
+        isBaseline: Bool
+    ) -> [String] {
+        if isBaseline {
+            return []
+        }
+
+        let previousPairs = Set(previous.map { DirTimestampPair(dir: $0.dir, timestamp: $0.timestamp) })
+        var notifyDirs: [String] = []
+        for event in current {
+            let pair = DirTimestampPair(dir: event.dir, timestamp: event.timestamp)
+            if !previousPairs.contains(pair) {
+                notifyDirs.append(event.dir)
+            }
+        }
+        return notifyDirs
+    }
+
+    static func buildContent(
+        dir: String,
+        home: String? = nil,
+        cwd: String? = nil
+    ) -> SessionNotificationContent {
+        let body = URL(fileURLWithPath: dir).lastPathComponent
+        let parent = URL(fileURLWithPath: dir).deletingLastPathComponent().path
+        let subtitle = shortenPath(
+            parent,
+            home: home ?? NSHomeDirectory(),
+            cwd: cwd ?? FileManager.default.currentDirectoryPath
+        )
+        return SessionNotificationContent(
+            title: title,
+            body: body,
+            subtitle: subtitle,
+            userInfoDir: dir
+        )
+    }
+
+    static func shortenPath(_ path: String, home: String, cwd: String) -> String {
+        guard !path.isEmpty else { return path }
+
+        let abs = (path as NSString).standardizingPath
+        let cwdAbs = (cwd as NSString).standardizingPath
+
+        if abs == cwdAbs {
+            return "."
+        }
+
+        if let rel = relativePath(from: cwdAbs, to: abs), rel != ".", !rel.hasPrefix("..") {
+            return rel
+        }
+
+        if abs == home {
+            return "~"
+        }
+
+        let homePrefix = home + "/"
+        if abs.hasPrefix(homePrefix) {
+            return "~" + String(abs.dropFirst(home.count))
+        }
+
+        return abs
+    }
+
+    private static func relativePath(from base: String, to target: String) -> String? {
+        let basePath = (base as NSString).standardizingPath
+        let targetPath = (target as NSString).standardizingPath
+
+        let baseComps = pathComponents(basePath)
+        let targetComps = pathComponents(targetPath)
+
+        var common = 0
+        while common < baseComps.count && common < targetComps.count && baseComps[common] == targetComps[common] {
+            common += 1
+        }
+
+        let upCount = baseComps.count - common
+        let downComps = Array(targetComps[common...])
+
+        if upCount == 0 && downComps.isEmpty {
+            return "."
+        }
+
+        if upCount > 0 {
+            let ups = Array(repeating: "..", count: upCount)
+            return (ups + downComps).joined(separator: "/")
+        }
+
+        return downComps.joined(separator: "/")
+    }
+
+    private static func pathComponents(_ path: String) -> [String] {
+        if path == "/" {
+            return []
+        }
+        return path.split(separator: "/").map(String.init)
+    }
+}
+
+func decodeEventsJSON(_ json: String) -> [SessionEvent]? {
+    guard let data = json.data(using: .utf8) else { return nil }
+    return try? makeJSONDecoder().decode([SessionEvent].self, from: data)
 }
 
 // MARK: - Simple HTTP Server (using Network.framework)
@@ -616,6 +753,51 @@ func runHelper() -> Never {
         response.relative_time = cmdDecoded.stderr
         response.count = cmdDecoded.durationMs
         response.unconsumed_count = 1 // success indicator
+
+    case "notification_diff":
+        guard let previousJSON = request.previous_json,
+              let currentJSON = request.current_json else {
+            response.error = "missing previous_json or current_json for notification_diff"
+            break
+        }
+
+        guard let previous = decodeEventsJSON(previousJSON),
+              let current = decodeEventsJSON(currentJSON) else {
+            response.error = "invalid event JSON for notification_diff"
+            break
+        }
+
+        let isBaseline = request.is_baseline ?? false
+        response.notify_dirs = TestSessionNotificationLogic.dirsNeedingNotification(
+            previous: previous,
+            current: current,
+            isBaseline: isBaseline
+        )
+
+    case "notification_content":
+        guard let dir = request.dir else {
+            response.error = "missing dir for notification_content"
+            break
+        }
+
+        let content = TestSessionNotificationLogic.buildContent(
+            dir: dir,
+            home: request.home,
+            cwd: request.cwd
+        )
+        response.title = content.title
+        response.body = content.body
+        response.subtitle = content.subtitle
+        response.user_info_dir = content.userInfoDir
+
+    case "notification_click":
+        guard let dir = request.dir else {
+            response.error = "missing dir for notification_click"
+            break
+        }
+
+        response.opened_dir = dir
+        response.consumed_dir = dir
 
     case "log_command_null_omit":
         guard let dir = request.log_dir else {

@@ -1,3 +1,7 @@
+# Scenario
+
+**Feature**: wait_tick — values change after mock timer advance
+
 ## Steps
 1. Take an **initial snapshot**: call `Run(t, {action: "fetch"})` to get current metrics (snapshot1).
 2. Trigger a **timer tick**: call `Run(t, {action: "wait_tick"})` to wait for the next tick and get updated metrics (snapshot2).

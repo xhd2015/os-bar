@@ -26,7 +26,12 @@ struct IntegrationsSettingsView: View {
         .frame(minWidth: 560, minHeight: 280)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("integrations-window")
-        .onAppear {
+        .task {
+            if ProcessInfo.processInfo.arguments.contains("-uiTestingOpenSettings") {
+                while !DaemonReadiness.shared.isReady {
+                    try? await Task.sleep(nanoseconds: 25_000_000)
+                }
+            }
             viewModel.refresh()
         }
     }
@@ -40,6 +45,7 @@ private struct IntegrationRowView: View {
         HStack(alignment: .center, spacing: 12) {
             Text(item.displayName)
                 .frame(width: 90, alignment: .leading)
+                .accessibilityHidden(true)
 
             Text(item.badgeTitle)
                 .font(.caption.weight(.semibold))
@@ -48,8 +54,11 @@ private struct IntegrationRowView: View {
                 .background(badgeColor.opacity(0.15))
                 .foregroundColor(badgeColor)
                 .clipShape(Capsule())
+                .accessibilityElement()
+                .accessibilityAddTraits(.isStaticText)
                 .accessibilityIdentifier("integration-\(item.id)-status")
                 .accessibilityLabel(item.badgeTitle)
+                .accessibilityValue(item.badgeTitle)
 
             Text(item.path)
                 .font(.caption)
@@ -57,10 +66,16 @@ private struct IntegrationRowView: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityHidden(true)
 
             if item.showsInstallButton {
                 Button("Install", action: onInstall)
+                    .accessibilityElement()
+                    .accessibilityAddTraits(.isButton)
                     .accessibilityIdentifier("integration-\(item.id)-install")
+                    .accessibilityAction {
+                        onInstall()
+                    }
             }
         }
         .accessibilityElement(children: .contain)

@@ -1,3 +1,7 @@
+# Scenario
+
+**Feature**: manual UI verification (automated tests skip)
+
 ## Preconditions
 - The `os-bar` app is built and running on macOS 13+.
 - The menu bar is visible and not hidden by system preferences.

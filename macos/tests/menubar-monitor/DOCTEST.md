@@ -7,6 +7,22 @@
 Test suite for the `SystemMonitor` component of the macOS menu bar app.
 Validates metric fetching, range correctness, timer-driven refresh behavior,
 and (manually) menu bar rendering and quit functionality.
+## Version
+
+0.0.1
+
+# DSN (Domain Specific Notion)
+
+The **SystemMonitor** Swift component supplies CPU and memory percentages
+for the menu bar. Tests drive it via a **Swift test helper**
+(`macos/.build/test-helper`) that reads one JSON `Request` from stdin and
+prints a JSON `Response` to stdout. A **mock fetcher** returns predetermined
+tick values (no live OS metrics).
+
+- Action `fetch`: immediate snapshot of `cpu_percent` and `mem_percent`.
+- Action `wait_tick`: advance the mock timer, then snapshot.
+- Both fields are `Double` in `[0.0, 100.0]`.
+
 
 ## Decision Tree
 
@@ -73,4 +89,67 @@ cd macos && xcodebuild test -scheme os-bar -destination 'platform=macOS'
 
 # Manual UI verification
 # Follow steps in tests/menubar-monitor/ui/DOCTEST.md
+```
+
+```go
+import (
+	"encoding/json"
+	"fmt"
+	"os/exec"
+	"path/filepath"
+	"testing"
+)
+
+type Request struct {
+	Action string `json:"action"`
+}
+
+type Response struct {
+	CPUPercent float64 `json:"cpu_percent"`
+	MEMPercent float64 `json:"mem_percent"`
+}
+
+func Run(t *testing.T, req *Request) (*Response, error) {
+	projectRoot := filepath.Join(DOCTEST_ROOT, "..", "..")
+	helperPath := filepath.Join(projectRoot, ".build", "test-helper")
+
+	// Build the helper if needed (idempotent)
+	helperSrc := filepath.Join(projectRoot, "os-barTests", "TestHelper.swift")
+	buildCmd := exec.Command("swiftc", "-o", helperPath, helperSrc)
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("failed to build test helper: %w\n%s", err, out)
+	}
+
+	// Serialize request to JSON
+	reqJSON, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	// Run the test helper with the request on stdin
+	cmd := exec.Command(helperPath)
+	cmd.Stdin = nil // will use pipe — see below
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get stdin pipe: %w", err)
+	}
+	go func() {
+		defer stdin.Close()
+		stdin.Write(reqJSON)
+		stdin.Write([]byte("\n"))
+	}()
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("test helper failed (exit code %v): %w\n%s",
+			cmd.ProcessState.ExitCode(), err, out)
+	}
+
+	var resp Response
+	if err := json.Unmarshal(out, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse test helper output: %w\noutput: %s", err, out)
+	}
+
+	return &resp, nil
+}
 ```

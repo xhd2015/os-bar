@@ -1,3 +1,5 @@
+# Scenario
+
 ## Steps
 1. Open Integrations window and dump accessibility layout.
 2. Assert per-row status badges and install buttons.

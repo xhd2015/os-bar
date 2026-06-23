@@ -1,3 +1,11 @@
+# Scenario
+
+**Feature**: relative time in minutes
+
+```
+5m ago -> 5m ago
+```
+
 ## Steps
 1. Pick a fixed reference time as "now".
 2. Compute a timestamp exactly 5 minutes before the reference time.

@@ -1,3 +1,5 @@
+# Scenario
+
 ## Preconditions
 - No pre-existing `hooks.json` before install (`PreExistingHooksJSON` is empty).
 

@@ -1,3 +1,11 @@
+# Scenario
+
+**Feature**: cap store at 20 events
+
+```
+add 21 dirs -> count=20
+```
+
 ## Steps
 1. Construct a list of 21 distinct directory paths.
 2. Call `Run(t, req)` with `action: "add_events_batch"` and `dirs` set to the 21 paths.

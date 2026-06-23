@@ -1,3 +1,11 @@
+# Scenario
+
+**Feature**: markConsumed flips consumed true
+
+```
+mark_consumed -> consumed=true
+```
+
 ## Steps
 1. Preload the store with one event at dir `"/m"` with `consumed: false`.
 2. Call `Run(t, req)` with `action: "mark_consumed"` and `dir: "/m"`.

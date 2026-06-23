@@ -1,3 +1,11 @@
+# Scenario
+
+**Feature**: valid POST /api/notify
+
+```
+POST {dir} -> 200 ok + event stored
+```
+
 ## Steps
 1. Construct a valid JSON request body: `{"type": "test", "dir": "/Users/test/server-project"}`.
 2. Call `Run(t, req)` with `action: "server_post"`, `http_method: "POST"`, `http_path: "/api/notify"`, `http_body`, and `content_type: "application/json"`.

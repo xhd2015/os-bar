@@ -6,7 +6,12 @@ class SessionStore: ObservableObject {
     @Published var events: [SessionEvent] = []
 
     private let client = DaemonClient.shared
+    private let notificationService = SessionNotificationService()
     private var pollTask: Task<Void, Never>?
+
+    func configureNotifications(appDelegate: AppDelegate) {
+        notificationService.configure(store: self, appDelegate: appDelegate)
+    }
 
     init() {
         startPolling()
@@ -28,7 +33,10 @@ class SessionStore: ObservableObject {
 
     func refresh() async {
         do {
-            events = try await client.listEvents()
+            let previous = events
+            let newEvents = try await client.listEvents()
+            events = newEvents
+            await notificationService.handleRefresh(previous: previous, current: newEvents)
         } catch {
             print("SessionStore: refresh failed: \(error)")
         }

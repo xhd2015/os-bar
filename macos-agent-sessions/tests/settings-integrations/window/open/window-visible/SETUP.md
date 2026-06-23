@@ -1,5 +1,7 @@
+# Scenario
+
 ## Steps
-1. Run sequence: `open_settings` → `dump_layout`.
+1. Run sequence: `open_settings` → `dump_layout` → `teardown`.
 2. Capture `resp.WindowOpen` and `resp.Layout`.
 
 ## Context
@@ -12,6 +14,7 @@ func Setup(t *testing.T, req *Request) error {
 	req.Sequence = []Request{
 		{Action: "open_settings"},
 		{Action: "dump_layout"},
+		{Action: "teardown"},
 	}
 	return nil
 }

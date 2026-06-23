@@ -1,3 +1,7 @@
+# Scenario
+
+**Feature**: fetch snapshot — both CPU and MEM valid
+
 ## Steps
 1. Call `Run(t, req)` with `action: "fetch"` to obtain a snapshot.
 2. Capture the `Response` with both `cpuPercent` and `memPercent`.

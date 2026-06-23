@@ -38,10 +38,16 @@ final class IntegrationsViewModel: ObservableObject {
     func refresh() {
         lastError = nil
         Task {
-            do {
-                integrations = try await client.integrations(global: useGlobalScope)
-            } catch {
-                lastError = error.localizedDescription
+            for attempt in 0..<10 {
+                do {
+                    integrations = try await client.integrations(global: useGlobalScope)
+                    lastError = nil
+                    return
+                } catch where attempt == 9 {
+                    lastError = error.localizedDescription
+                } catch {
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                }
             }
         }
     }

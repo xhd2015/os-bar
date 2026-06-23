@@ -1,3 +1,11 @@
+# Scenario
+
+**Feature**: invalid JSON returns 400
+
+```
+bad body -> http_status=400
+```
+
 ## Steps
 1. Construct an unparseable request body: `this is not json`.
 2. Call `Run(t, req)` with `action: "server_post"`, `http_method: "POST"`, `http_path: "/api/notify"`, `http_body: "this is not json"`, and `content_type: "application/json"`.

@@ -1,3 +1,5 @@
+# Scenario
+
 ## Preconditions
 - Tests verify bundled hook script content after installation.
 

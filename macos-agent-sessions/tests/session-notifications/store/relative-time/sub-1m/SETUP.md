@@ -1,3 +1,11 @@
+# Scenario
+
+**Feature**: relative time under one minute
+
+```
+30s ago -> <1m ago
+```
+
 ## Steps
 1. Pick a fixed reference time as "now" for deterministic output.
 2. Compute a timestamp 30 seconds before the reference time.

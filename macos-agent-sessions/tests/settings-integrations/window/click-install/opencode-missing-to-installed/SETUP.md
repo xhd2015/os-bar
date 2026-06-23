@@ -1,3 +1,5 @@
+# Scenario
+
 ## Steps
 1. Start with empty `fakeHome` (all integrations missing).
 2. Run sequence: `open_settings` → `dump_layout` → click `integration-opencode-install` → wait 500ms → `dump_layout` → `teardown`.

@@ -1,3 +1,11 @@
+# Scenario
+
+**Feature**: prune events older than 7 days
+
+```
+preload 8-day-old event -> prune -> count=0
+```
+
 ## Steps
 1. Compute a timestamp from 8 days ago (outside the 7-day window).
 2. Construct a preloaded `events_json` array with one event at that timestamp.

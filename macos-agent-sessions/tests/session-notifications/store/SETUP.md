@@ -1,3 +1,11 @@
+# Scenario
+
+**Feature**: SessionStore operations (add, dedup, prune, cap, sort, consumed)
+
+```
+doctest -> add_event | prune | mark_consumed -> SessionStore -> events
+```
+
 ## Preconditions
 - All tests in this subtree exercise `SessionStore` operations directly (no HTTP server involved).
 - The test helper creates a fresh `SessionStore` instance for each action unless `events_json` is provided to preload state.

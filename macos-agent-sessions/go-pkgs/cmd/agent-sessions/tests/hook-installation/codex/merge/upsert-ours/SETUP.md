@@ -1,3 +1,5 @@
+# Scenario
+
 ## Steps
 1. Load `testdata/codex-old-agent-sessions.json` into `PreExistingHooksJSON`.
 2. Call `Run(t, req)` with local codex install.

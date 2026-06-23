@@ -1,3 +1,11 @@
+# Scenario
+
+**Feature**: GET returns 405
+
+```
+GET /api/notify -> 405
+```
+
 ## Steps
 1. Use HTTP method GET instead of POST for the `/api/notify` endpoint.
 2. Call `Run(t, req)` with `action: "server_post"`, `http_method: "GET"`, `http_path: "/api/notify"`.

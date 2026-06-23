@@ -1,3 +1,5 @@
+# Scenario
+
 ## Preconditions
 - Tests in this subtree validate CLI argument requirements for `agent-sessions install`.
 

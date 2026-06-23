@@ -1,3 +1,11 @@
+# Scenario
+
+**Feature**: new event defaults to unconsumed
+
+```
+add_event -> consumed=false
+```
+
 ## Steps
 1. Call `Run(t, req)` with `action: "add_event"` and `dir: "/a"`.
 2. Capture the `Response` with the event and `unconsumed_count`.

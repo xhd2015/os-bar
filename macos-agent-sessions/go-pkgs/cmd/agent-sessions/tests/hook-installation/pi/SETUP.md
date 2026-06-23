@@ -1,3 +1,5 @@
+# Scenario
+
 ## Preconditions
 - Smoke tests for pi extension install.
 

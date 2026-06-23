@@ -1,3 +1,5 @@
+# Scenario
+
 ## Preconditions
 - Tests pre-seed `hooks.json` before install via `PreExistingHooksJSON`.
 - Fixtures live in `testdata/` at the suite root.

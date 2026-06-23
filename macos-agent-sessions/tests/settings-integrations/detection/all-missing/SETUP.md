@@ -1,3 +1,5 @@
+# Scenario
+
 ## Steps
 1. Leave `fakeHome` empty (no seed profile).
 2. Call `Run(t, req)` with `integrations --json --global`.

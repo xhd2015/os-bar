@@ -1,3 +1,5 @@
+# Scenario
+
 ## Steps
 1. Seed bundled grok hook JSON and stop script into `fakeHome/.grok/hooks/`.
 2. Call `Run(t, req)` with `integrations --json --global`.

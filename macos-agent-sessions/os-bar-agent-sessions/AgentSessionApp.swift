@@ -1,5 +1,19 @@
+import ApplicationServices
 import SwiftUI
 import ServiceManagement
+
+@MainActor
+final class DaemonReadiness: ObservableObject {
+    static let shared = DaemonReadiness()
+
+    @Published private(set) var isReady = false
+
+    private init() {}
+
+    func markReady() {
+        isReady = true
+    }
+}
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     weak var store: SessionStore?
@@ -12,6 +26,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if ProcessInfo.processInfo.arguments.contains("-uiTestingOpenSettings") {
+            Task { @MainActor in
+                await ensureUITestingDaemonRunning()
+            }
             return
         }
         Task { @MainActor in
@@ -21,7 +38,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @MainActor
+    private func ensureUITestingDaemonRunning() async {
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(options)
+
+        // UI automation helper pre-starts the daemon; never spawn here (avoids untracked orphans).
+        for _ in 0..<30 {
+            if (try? await DaemonClient.shared.health()) == true {
+                break
+            }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        DaemonReadiness.shared.markReady()
+    }
+
+    @MainActor
     private func ensureDaemonRunning() async {
+        defer { DaemonReadiness.shared.markReady() }
         if (try? await DaemonClient.shared.health()) == true {
             return
         }
@@ -39,8 +74,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let binary = daemonBinaryPath()
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
-        process.arguments = ["serve"]
-        process.environment = ProcessInfo.processInfo.environment
+        var args = ["serve"]
+        let env = ProcessInfo.processInfo.environment
+        if let port = env["AGENT_SESSIONS_PORT"] {
+            args.append(contentsOf: ["--port", port])
+        }
+        if let stateDir = env["AGENT_SESSIONS_STATE_DIR"] {
+            args.append(contentsOf: ["--state-dir", stateDir])
+        }
+        process.arguments = args
+        process.environment = env
         do {
             try process.run()
             daemonProcess = process
@@ -189,6 +232,7 @@ struct AgentSessionApp: App {
         let store = SessionStore()
         _store = StateObject(wrappedValue: store)
         appDelegate.store = store
+        store.configureNotifications(appDelegate: appDelegate)
         // Sync toggle with actual system state
         if #available(macOS 13.0, *) {
             _autoStart.wrappedValue = SMAppService.mainApp.status == .enabled
@@ -202,7 +246,6 @@ struct AgentSessionApp: App {
         .windowResizability(.contentSize)
 
         MenuBarExtra {
-            IntegrationsLauncher()
             VStack(alignment: .leading, spacing: 0) {
                 if store.events.isEmpty {
                     Text("No sessions")
@@ -262,15 +305,18 @@ struct AgentSessionApp: App {
             .padding(.vertical, 4)
             .frame(minWidth: 220)
         } label: {
-            HStack(spacing: 2) {
-                Image(systemName: store.unconsumedCount > 0 ? "bell.badge" : "bell")
-                    .imageScale(.small)
-                if store.unconsumedCount > 0 {
-                    Text("\(store.unconsumedCount)")
-                        .font(.system(size: 11))
+            ZStack {
+                HStack(spacing: 2) {
+                    Image(systemName: store.unconsumedCount > 0 ? "bell.badge" : "bell")
+                        .imageScale(.small)
+                    if store.unconsumedCount > 0 {
+                        Text("\(store.unconsumedCount)")
+                            .font(.system(size: 11))
+                    }
                 }
+                .fixedSize()
+                IntegrationsLauncher()
             }
-            .fixedSize()
         }
     }
 
@@ -288,13 +334,24 @@ struct AgentSessionApp: App {
 
 private struct IntegrationsLauncher: View {
     @Environment(\.openWindow) private var openWindow
+    @ObservedObject private var daemonReadiness = DaemonReadiness.shared
 
     var body: some View {
         Color.clear
             .frame(width: 0, height: 0)
             .task {
-                if ProcessInfo.processInfo.arguments.contains("-uiTestingOpenSettings") {
+                guard ProcessInfo.processInfo.arguments.contains("-uiTestingOpenSettings") else {
+                    return
+                }
+                while !daemonReadiness.isReady {
+                    try? await Task.sleep(nanoseconds: 25_000_000)
+                }
+                for _ in 0..<10 {
                     openWindow(id: "integrations")
+                    if NSApp.windows.contains(where: { $0.title == "Integrations" }) {
+                        return
+                    }
+                    try? await Task.sleep(nanoseconds: 100_000_000)
                 }
             }
     }

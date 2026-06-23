@@ -1,3 +1,11 @@
+# Scenario
+
+**Feature**: nil command omits JSON key
+
+```
+log_command_null_omit -> no command key
+```
+
 ## Steps
 1. Call `Run(t, req)` with `action: "log_command_test"` and NO command fields set.
 2. The test helper creates an entry without a `command` and verifies the `"command"` key is absent from the serialized JSON.

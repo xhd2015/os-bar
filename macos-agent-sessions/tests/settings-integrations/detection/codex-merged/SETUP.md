@@ -1,3 +1,5 @@
+# Scenario
+
 ## Steps
 1. Seed merged `hooks.json` from `testdata/codex-merged-hooks.json` with foreign hooks preserved.
 2. Seed matching stop script at `fakeHome/.codex/hooks/agent-sessions-stop.sh`.

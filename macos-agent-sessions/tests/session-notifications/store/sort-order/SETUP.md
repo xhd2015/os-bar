@@ -1,3 +1,11 @@
+# Scenario
+
+**Feature**: events sorted newest-first
+
+```
+add 3 events -> newest first
+```
+
 ## Steps
 1. Preload the store with 3 events having known, distinct timestamps via `events_json`.
 2. Call `Run(t, req)` with `action: "add_event"` and a new dir.

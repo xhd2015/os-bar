@@ -1,3 +1,5 @@
+# Scenario
+
 ## Preconditions
 - Grok loads multiple `*.json` files from `.grok/hooks/` at runtime; install writes only `agent-sessions.json`.
 

@@ -1,3 +1,11 @@
+# Scenario
+
+**Feature**: relative time formatting
+
+```
+relative_time(timestamp) -> Xm ago | Xh ago
+```
+
 ## Preconditions
 - All tests in this subtree validate the `relativeTime(for:)` formatting logic.
 - The test helper computes the relative time between `timestamp_iso` and `reference_iso` (or current time if `reference_iso` is omitted).

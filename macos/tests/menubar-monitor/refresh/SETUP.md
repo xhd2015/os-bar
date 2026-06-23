@@ -1,3 +1,7 @@
+# Scenario
+
+**Feature**: timer-driven refresh via wait_tick action
+
 ## Preconditions
 - A mock host-info fetcher is configured to return different metric values after each timer tick.
   - Tick 0 (initial): CPU = 45.2%, MEM = 72.8%

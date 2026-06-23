@@ -1,3 +1,5 @@
+# Scenario
+
 ## Steps
 1. Open Integrations window from empty `fakeHome`.
 2. Capture layout before click, click install button, wait, capture layout after.

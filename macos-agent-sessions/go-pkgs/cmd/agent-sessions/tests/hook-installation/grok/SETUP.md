@@ -1,3 +1,5 @@
+# Scenario
+
 ## Preconditions
 - Tests in this subtree install grok Stop notification hooks (`agent-sessions.json` + `bin/agent-sessions-stop.sh`).
 

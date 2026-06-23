@@ -1,3 +1,11 @@
+# Scenario
+
+**Feature**: relative time in hours
+
+```
+2h ago -> 2h ago
+```
+
 ## Steps
 1. Pick a fixed reference time as "now".
 2. Compute a timestamp exactly 2 hours before the reference time.

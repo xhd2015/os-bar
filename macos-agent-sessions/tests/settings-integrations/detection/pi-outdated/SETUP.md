@@ -1,3 +1,5 @@
+# Scenario
+
 ## Steps
 1. Seed `testdata/pi-outdated.ts` into `fakeHome/.pi/agent/extensions/agent-sessions-hook.ts`.
 2. Call `Run(t, req)` with `integrations --json --global`.

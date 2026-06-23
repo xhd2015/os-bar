@@ -59,9 +59,14 @@ final class UIAutomationSession {
 
     private(set) var appProcess: Process?
     private(set) var appPID: pid_t = 0
+    private var daemonProcess: Process?
+    private var daemonPID: pid_t = 0
+    private var integrationsWindow: AXUIElement?
     private var dumpCount = 0
     private var projectRoot = ""
     private var cliPath = ""
+    private var daemonPort = 0
+    private var stateDir = ""
 
     private init() {}
 
@@ -72,6 +77,7 @@ final class UIAutomationSession {
     func configure(homeDir: String, workDir: String) throws {
         projectRoot = try Self.findProjectRoot()
         cliPath = try Self.buildCLI(projectRoot: projectRoot)
+        daemonPort = try Self.pickEphemeralPort()
         _ = homeDir
         _ = workDir
     }
@@ -81,6 +87,12 @@ final class UIAutomationSession {
             return
         }
 
+        if daemonPort == 0 {
+            daemonPort = (try? Self.pickEphemeralPort()) ?? 38272
+        }
+        stateDir = (homeDir as NSString).appendingPathComponent(".os-bar/agent-sessions")
+        try ensureDaemonRunning(homeDir: homeDir)
+
         let appPath = try Self.buildApp(projectRoot: projectRoot)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: appPath)
@@ -89,31 +101,98 @@ final class UIAutomationSession {
         var env = ProcessInfo.processInfo.environment
         env["HOME"] = homeDir
         env["AGENT_SESSIONS_CLI"] = cliPath
+        env["AGENT_SESSIONS_PORT"] = String(daemonPort)
+        env["AGENT_SESSIONS_STATE_DIR"] = stateDir
         let cliDir = (cliPath as NSString).deletingLastPathComponent
         env["PATH"] = "\(cliDir):" + (env["PATH"] ?? "")
         process.environment = env
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
 
         try process.run()
         appProcess = process
         appPID = process.processIdentifier
+        integrationsWindow = nil
 
         let deadline = Date().addingTimeInterval(15)
         while Date() < deadline {
-            if let window = try findIntegrationsWindow(),
-               let layout = try? serializeElement(window),
-               treeContainsIdentifier(layout, id: "integration-grok") {
+            if try integrationsReady() {
+                usleep(100_000)
                 return
             }
-            usleep(200_000)
+            usleep(50_000)
         }
-        throw AutomationError.timeout("Integrations window did not appear")
+        throw AutomationError.timeout("Integrations window did not become ready within 15s")
+    }
+
+    private func ensureDaemonRunning(homeDir: String) throws {
+        if try daemonHealthy() {
+            if daemonPID == 0 {
+                daemonPID = Self.findServePID(port: daemonPort, stateDir: stateDir)
+            }
+            return
+        }
+        try FileManager.default.createDirectory(atPath: stateDir, withIntermediateDirectories: true)
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: cliPath)
+        process.arguments = ["serve", "--port", String(daemonPort), "--state-dir", stateDir]
+        var env = ProcessInfo.processInfo.environment
+        env["HOME"] = homeDir
+        process.environment = env
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        daemonProcess = process
+        daemonPID = process.processIdentifier
+
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            if try daemonHealthy() {
+                return
+            }
+            usleep(50_000)
+        }
+        throw AutomationError.setup("daemon did not become healthy within 5s on port \(daemonPort)")
+    }
+
+    private func daemonHealthy() throws -> Bool {
+        guard let url = URL(string: "http://127.0.0.1:\(daemonPort)/api/health") else {
+            return false
+        }
+        var request = URLRequest(url: url, timeoutInterval: 0.5)
+        let semaphore = DispatchSemaphore(value: 0)
+        var healthy = false
+        URLSession.shared.dataTask(with: request) { data, response, _ in
+            defer { semaphore.signal() }
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  let data,
+                  let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  body["ok"] as? Bool == true
+            else {
+                return
+            }
+            healthy = true
+        }.resume()
+        _ = semaphore.wait(timeout: .now() + 1)
+        return healthy
+    }
+
+    private func integrationsReady() throws -> Bool {
+        guard let window = try findIntegrationsWindow() else {
+            return false
+        }
+        if try findElement(in: window, identifier: "integration-grok-status", role: nil, title: nil) != nil {
+            return true
+        }
+        return try findElement(in: window, identifier: "integration-grok", role: nil, title: nil) != nil
     }
 
     func dumpLayout() throws -> AXNode {
         guard let window = try findIntegrationsWindow() else {
             throw AutomationError.windowNotFound
         }
-        return try serializeElement(window)
+        return try collectIntegrationLayout(from: window)
     }
 
     func click(identifier: String?, role: String?, title: String?) throws -> (ok: Bool, x: Double, y: Double) {
@@ -124,44 +203,95 @@ final class UIAutomationSession {
             return (false, 0, 0)
         }
 
+        NSRunningApplication(processIdentifier: appPID)?.activate(options: [.activateIgnoringOtherApps])
+        _ = AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+        usleep(100_000)
+
         var clickPoint = CGPoint.zero
         if let frame = try axFrame(target) {
             clickPoint = CGPoint(x: frame.x + frame.w / 2, y: frame.y + frame.h / 2)
         }
 
-        let pressed = AXUIElementPerformAction(target, kAXPressAction as CFString)
-        if pressed != .success {
-            if clickPoint != .zero {
-                clickAtScreenPoint(clickPoint)
-            } else {
-                return (false, 0, 0)
-            }
+        var clicked = false
+        if AXUIElementPerformAction(target, kAXPressAction as CFString) == .success {
+            clicked = true
+        }
+        if clickPoint != .zero {
+            clickAtScreenPoint(clickPoint)
+            clicked = true
         }
 
-        if clickPoint == .zero, let frame = try axFrame(target) {
-            clickPoint = CGPoint(x: frame.x + frame.w / 2, y: frame.y + frame.h / 2)
+        guard clicked else {
+            return (false, 0, 0)
+        }
+
+        if let identifier, identifier.hasSuffix("-install") {
+            let statusID = String(identifier.dropLast("-install".count)) + "-status"
+            try waitForStatusChange(statusID: statusID, fromTitle: "Missing", timeout: 8)
         }
 
         return (true, Double(clickPoint.x), Double(clickPoint.y))
     }
 
+    private func waitForStatusChange(statusID: String, fromTitle: String, timeout: TimeInterval) throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let window = try findIntegrationsWindow(),
+               let status = try findElement(in: window, identifier: statusID, role: nil, title: nil),
+               let node = try? elementToNode(status),
+               let title = node.title,
+               title != fromTitle {
+                return
+            }
+            usleep(100_000)
+        }
+        throw AutomationError.timeout("status \(statusID) did not change from \(fromTitle) within \(Int(timeout))s")
+    }
+
+    func applyWait(ms: Int?) {
+        guard let ms, ms > 0 else { return }
+        usleep(useconds_t(ms) * 1000)
+    }
+
     func teardown() {
         if let process = appProcess {
+            let pid = process.processIdentifier
+            Self.killChildProcesses(of: pid)
             if process.isRunning {
                 process.terminate()
-                let deadline = Date().addingTimeInterval(3)
-                while process.isRunning && Date() < deadline {
-                    usleep(100_000)
-                }
+                usleep(100_000)
                 if process.isRunning {
-                    kill(process.processIdentifier, SIGKILL)
+                    kill(pid, SIGKILL)
                 }
                 process.waitUntilExit()
             }
         }
+        if let process = daemonProcess {
+            let pid = process.processIdentifier
+            if process.isRunning {
+                process.terminate()
+                usleep(50_000)
+                if process.isRunning {
+                    kill(pid, SIGKILL)
+                }
+                process.waitUntilExit()
+            }
+            Self.killChildProcesses(of: pid)
+        }
+        if daemonPID > 0 {
+            Self.signalPID(daemonPID, sig: SIGTERM)
+            usleep(50_000)
+            Self.signalPID(daemonPID, sig: SIGKILL)
+        }
+        Self.killServeProcesses(port: daemonPort, stateDir: stateDir)
         appProcess = nil
+        daemonProcess = nil
         appPID = 0
+        daemonPID = 0
+        integrationsWindow = nil
         dumpCount = 0
+        daemonPort = 0
+        stateDir = ""
     }
 
     func recordDump(_ node: AXNode, into response: inout Response) {
@@ -174,6 +304,9 @@ final class UIAutomationSession {
     }
 
     private func findIntegrationsWindow() throws -> AXUIElement? {
+        if let cached = integrationsWindow {
+            return cached
+        }
         guard appPID > 0 else { return nil }
         let app = AXUIElementCreateApplication(appPID)
         var value: CFTypeRef?
@@ -187,20 +320,67 @@ final class UIAutomationSession {
 
         for window in windows {
             if let title = try axString(window, kAXTitleAttribute as CFString), title == "Integrations" {
+                integrationsWindow = window
                 return window
             }
-            if let subtree = try? serializeElement(window),
-               treeContainsIdentifier(subtree, id: "integrations-window") {
+            if try findElement(in: window, identifier: "integrations-window", role: nil, title: nil) != nil {
+                integrationsWindow = window
+                return window
+            }
+            if try findElement(in: window, identifier: "integration-grok", role: nil, title: nil) != nil {
+                integrationsWindow = window
                 return window
             }
         }
         return nil
     }
 
-    private func treeContainsIdentifier(_ node: AXNode, id: String) -> Bool {
-        if node.identifier == id { return true }
-        guard let children = node.children else { return false }
-        return children.contains { treeContainsIdentifier($0, id: id) }
+    private func collectIntegrationLayout(from window: AXUIElement) throws -> AXNode {
+        let targets = [
+            "integrations-window",
+            "integration-grok", "integration-grok-status", "integration-grok-install",
+            "integration-opencode", "integration-opencode-status", "integration-opencode-install",
+            "integration-pi", "integration-pi-status", "integration-pi-install",
+            "integration-codex", "integration-codex-status", "integration-codex-install",
+        ]
+        var nodes: [AXNode] = []
+        for target in targets {
+            if let element = try findElement(in: window, identifier: target, role: nil, title: nil) {
+                nodes.append(try elementToNode(element))
+            }
+        }
+        return AXNode(
+            role: "AXWindow",
+            title: "Integrations",
+            identifier: "integrations-window",
+            value: nil,
+            frame: nil,
+            children: nodes.isEmpty ? nil : nodes
+        )
+    }
+
+    private func elementToNode(_ element: AXUIElement) throws -> AXNode {
+        let role = try axRole(element)
+        var title = try axString(element, kAXTitleAttribute as CFString)
+        let identifier = try axString(element, kAXIdentifierAttribute as CFString)
+        let value = try axString(element, kAXValueAttribute as CFString)
+        if title == nil, let description = try axString(element, kAXDescriptionAttribute as CFString) {
+            title = description
+        }
+        if title == nil, role == "AXStaticText", let value {
+            title = value
+        }
+        if title == nil, let value {
+            title = value
+        }
+        return AXNode(
+            role: role,
+            title: title,
+            identifier: identifier,
+            value: value,
+            frame: try axFrame(element),
+            children: nil
+        )
     }
 
     private func findElement(
@@ -210,8 +390,10 @@ final class UIAutomationSession {
         title: String?
     ) throws -> AXUIElement? {
         var stack = [root]
-        while !stack.isEmpty {
+        var visited = 0
+        while !stack.isEmpty, visited < 512 {
             let element = stack.removeLast()
+            visited += 1
             let elementRole = try axRole(element)
             let elementTitle = try axString(element, kAXTitleAttribute as CFString)
             let elementIdentifier = try axString(element, kAXIdentifierAttribute as CFString)
@@ -230,7 +412,7 @@ final class UIAutomationSession {
         return nil
     }
 
-    private func serializeElement(_ element: AXUIElement) throws -> AXNode {
+    private func serializeElement(_ element: AXUIElement, depth: Int = 0) throws -> AXNode {
         let role = try axRole(element)
         var title = try axString(element, kAXTitleAttribute as CFString)
         let identifier = try axString(element, kAXIdentifierAttribute as CFString)
@@ -239,8 +421,14 @@ final class UIAutomationSession {
             title = value
         }
         let frame = try axFrame(element)
-        let childrenAX = try axChildren(element) ?? []
-        let children = try childrenAX.map { try serializeElement($0) }
+
+        var children: [AXNode]?
+        if depth < 12 {
+            let childrenAX = try axChildren(element) ?? []
+            if !childrenAX.isEmpty {
+                children = try childrenAX.prefix(64).map { try serializeElement($0, depth: depth + 1) }
+            }
+        }
 
         return AXNode(
             role: role,
@@ -248,7 +436,7 @@ final class UIAutomationSession {
             identifier: identifier,
             value: value,
             frame: frame,
-            children: children.isEmpty ? nil : children
+            children: children
         )
     }
 
@@ -297,9 +485,16 @@ final class UIAutomationSession {
     }
 
     private func clickAtScreenPoint(_ point: CGPoint) {
-        let src = CGEventSource(stateID: .combinedSessionState)
-        if let down = CGEvent(mouseEventSource: src, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left),
-           let up = CGEvent(mouseEventSource: src, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left) {
+        let src = CGEventSource(stateID: .hidSystemState)
+        guard let down = CGEvent(mouseEventSource: src, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left),
+              let up = CGEvent(mouseEventSource: src, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left)
+        else {
+            return
+        }
+        if appPID > 0 {
+            down.postToPid(appPID)
+            up.postToPid(appPID)
+        } else {
             down.post(tap: .cghidEventTap)
             up.post(tap: .cghidEventTap)
         }
@@ -368,6 +563,128 @@ final class UIAutomationSession {
         throw AutomationError.setup("app binary not found under \(buildRoot)")
     }
 
+    private static func signalPID(_ pid: pid_t, sig: Int32) {
+        guard pid > 0 else { return }
+        if kill(pid, sig) == 0 {
+            return
+        }
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        if sysctl(&mib, u_int(mib.count), &info, &size, nil, 0) == 0,
+           info.kp_proc.p_pid == pid
+        {
+            _ = kill(pid, sig)
+        }
+    }
+
+    private static func pidsMatching(pattern: String) -> [pid_t] {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        proc.arguments = ["-f", pattern]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        try? proc.run()
+        proc.waitUntilExit()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let text = String(data: data, encoding: .utf8) else { return [] }
+        var pids: [pid_t] = []
+        for line in text.split(separator: "\n") {
+            if let pid = Int32(line.trimmingCharacters(in: .whitespaces)), pid > 0 {
+                pids.append(pid)
+            }
+        }
+        return pids
+    }
+
+    private static func findServePID(port: Int, stateDir: String) -> pid_t {
+        for pattern in serveMatchPatterns(port: port, stateDir: stateDir) {
+            if let pid = pidsMatching(pattern: pattern).first {
+                return pid
+            }
+        }
+        return 0
+    }
+
+    private static func serveMatchPatterns(port: Int, stateDir: String) -> [String] {
+        var patterns: [String] = []
+        if port > 0 {
+            patterns.append("agent-sessions serve --port \(port)")
+        }
+        if !stateDir.isEmpty {
+            patterns.append("agent-sessions serve.*--state-dir \(NSRegularExpression.escapedPattern(for: stateDir))")
+        }
+        return patterns
+    }
+
+    private static func killServeProcesses(port: Int, stateDir: String) {
+        var pids = Set<pid_t>()
+        for pattern in serveMatchPatterns(port: port, stateDir: stateDir) {
+            for pid in pidsMatching(pattern: pattern) {
+                pids.insert(pid)
+            }
+        }
+        for pid in pids {
+            signalPID(pid, sig: SIGTERM)
+        }
+        usleep(100_000)
+        for pid in pids {
+            signalPID(pid, sig: SIGKILL)
+        }
+    }
+
+    private static func killChildProcesses(of parentPID: pid_t) {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        proc.arguments = ["-P", String(parentPID)]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        try? proc.run()
+        proc.waitUntilExit()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let text = String(data: data, encoding: .utf8) else { return }
+        for line in text.split(separator: "\n") {
+            if let child = Int32(line.trimmingCharacters(in: .whitespaces)) {
+                kill(child, SIGKILL)
+            }
+        }
+    }
+
+    private static func pickEphemeralPort() throws -> Int {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else {
+            throw AutomationError.setup("socket() failed")
+        }
+        defer { close(fd) }
+
+        var addr = sockaddr_in()
+        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = 0
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+
+        let bindResult = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        guard bindResult == 0 else {
+            throw AutomationError.setup("bind() failed for ephemeral port")
+        }
+
+        var bound = sockaddr_in()
+        var boundLen = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let nameResult = withUnsafeMutablePointer(to: &bound) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                getsockname(fd, $0, &boundLen)
+            }
+        }
+        guard nameResult == 0 else {
+            throw AutomationError.setup("getsockname() failed")
+        }
+        return Int(UInt16(bigEndian: bound.sin_port))
+    }
+
     private static func buildApp(projectRoot: String) throws -> String {
         if let path = try? appBinaryPath(projectRoot: projectRoot) {
             return path
@@ -410,13 +727,20 @@ final class UIAutomationSession {
     }
 }
 
-func withAutomationLock<T>(projectRoot: String, _ body: () throws -> T) rethrows -> T {
+func withAutomationLock<T>(projectRoot: String, _ body: () throws -> T) throws -> T {
     let lockDir = (projectRoot as NSString).appendingPathComponent(".build")
     try? FileManager.default.createDirectory(atPath: lockDir, withIntermediateDirectories: true)
     let lockPath = (lockDir as NSString).appendingPathComponent("ui-automation.lock")
     let fd = open(lockPath, O_CREAT | O_RDWR, 0o644)
     if fd >= 0 {
-        flock(fd, LOCK_EX)
+        let deadline = Date().addingTimeInterval(60)
+        while flock(fd, LOCK_EX | LOCK_NB) != 0 {
+            if Date() >= deadline {
+                close(fd)
+                throw UIAutomationSession.AutomationError.timeout("ui-automation lock timeout after 60s")
+            }
+            usleep(100_000)
+        }
     }
     defer {
         if fd >= 0 {
@@ -452,6 +776,7 @@ func runHelper() -> Never {
         switch req.action {
         case "open_settings":
             do {
+                session.applyWait(ms: req.wait_ms)
                 try session.configure(homeDir: homeDir, workDir: workDir)
                 try session.openSettings(homeDir: homeDir)
                 resp.window_open = true
@@ -467,6 +792,7 @@ func runHelper() -> Never {
 
         case "dump_layout":
             do {
+                session.applyWait(ms: req.wait_ms)
                 let layout = try session.dumpLayout()
                 session.recordDump(layout, into: &resp)
                 resp.window_open = true
@@ -482,6 +808,7 @@ func runHelper() -> Never {
 
         case "click":
             do {
+                session.applyWait(ms: req.wait_ms)
                 let result = try session.click(
                     identifier: req.identifier,
                     role: req.role,
@@ -490,11 +817,6 @@ func runHelper() -> Never {
                 resp.click_ok = result.ok
                 resp.click_x = result.x
                 resp.click_y = result.y
-                if req.wait_ms ?? 0 > 0 {
-                    usleep(useconds_t(req.wait_ms!) * 1000)
-                } else {
-                    usleep(500_000)
-                }
             } catch let error as UIAutomationSession.AutomationError {
                 if case .apiDisabled = error {
                     resp.error = error.localizedDescription ?? "kAXErrorAPIDisabled (-25211)"
@@ -523,8 +845,15 @@ func runHelper() -> Never {
     }
 
     let projectRoot = (try? UIAutomationSession.findProjectRoot()) ?? FileManager.default.currentDirectoryPath
-    withAutomationLock(projectRoot: projectRoot) {
-        handle(request, &response)
+    defer { session.teardown() }
+    do {
+        try withAutomationLock(projectRoot: projectRoot) {
+            handle(request, &response)
+        }
+    } catch {
+        if response.error.isEmpty {
+            response.error = error.localizedDescription
+        }
     }
 
     let encoder = JSONEncoder()

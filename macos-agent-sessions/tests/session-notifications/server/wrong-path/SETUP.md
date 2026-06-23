@@ -1,3 +1,11 @@
+# Scenario
+
+**Feature**: unknown path returns 404
+
+```
+POST /api/wrong -> 404
+```
+
 ## Steps
 1. Use an incorrect URL path: `/api/wrong` instead of `/api/notify`.
 2. Call `Run(t, req)` with `action: "server_post"`, `http_method: "POST"`, `http_path: "/api/wrong"`.

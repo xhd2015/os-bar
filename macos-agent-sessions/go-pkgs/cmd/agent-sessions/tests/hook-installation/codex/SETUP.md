@@ -1,3 +1,5 @@
+# Scenario
+
 ## Preconditions
 - Tests in this subtree install codex Stop notification hooks via `mergeCodexHooks`.
 - Codex writes `hooks.json` and `hooks/agent-sessions-stop.sh`.

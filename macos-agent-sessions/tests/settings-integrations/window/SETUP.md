@@ -1,3 +1,5 @@
+# Scenario
+
 ## Preconditions
 - **Accessibility permission required:** Window tests use macOS Accessibility APIs (`AXUIElement`, `AXPress` / `CGEvent`). The test runner process must have Accessibility enabled in System Settings → Privacy & Security → Accessibility.
 - If the UI automation helper returns error containing `kAXErrorAPIDisabled` (-25211), `Run` calls `t.Skip` with message: `Accessibility API disabled (kAXErrorAPIDisabled); enable Accessibility for test runner`.
@@ -8,6 +10,7 @@
 1. Window leaves use `ui-automation-helper` actions: `open_settings`, `dump_layout`, `click`, `sequence`, `teardown`.
 2. Empty `fakeHome` unless a leaf seeds fixtures (click-install leaves start from missing state).
 3. `req.Global = true` for click-install leaves (v1 global-only install from UI).
+4. Each window leaf has a **30s hard timeout** on the helper subprocess. On timeout, the failure message includes debug hints (stdin/pipe hang, stale processes, lock contention).
 
 ## Context
 - Window title: **Integrations**.

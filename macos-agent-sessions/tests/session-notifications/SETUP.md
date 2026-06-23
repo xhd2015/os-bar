@@ -1,122 +1,82 @@
+# Scenario
+
+**Feature**: session store, HTTP server, and macOS notification logic via Swift test helper
+
+```
+# doctest harness builds test helper, sends JSON Request on stdin
+doctest Run(req) -> swiftc test-helper -> TestHelper.swift
+
+# store actions exercise SessionStore rules
+doctest -> add_event | prune | mark_consumed -> in-memory store -> events JSON
+
+# server actions exercise embedded HTTP server
+doctest -> POST /api/notify -> SessionServer -> events + http_status
+
+# notification actions exercise SessionNotificationService logic (no real UNNotification)
+doctest -> notification_diff | notification_content | notification_click -> notify_dirs, title/body/subtitle, opened_dir
+```
+
 ## Preconditions
+
 - The `macos-agent-sessions` Swift package exists with `SessionStore`, `SessionServer`, and `SessionEvent` types.
 - `SessionStore` persists events to `UserDefaults` under key `"sessionEvents"` as a JSON-encoded array of `SessionEvent`.
 - A Swift test helper executable is built at `macos-agent-sessions/.build/test-helper` that accepts a JSON `Request` on stdin (single line) and outputs a JSON `Response` on stdout.
 - The test helper links against the app target and can create `SessionStore` instances, invoke store actions, and run an embedded HTTP server for server tests.
+- Notification helper actions mirror `SessionNotificationService` diff/content/click logic without posting real notifications.
+- `DOCTEST_ROOT` refers to the directory of this SETUP.md file.
 
 ## Steps
-1. Build the Swift test helper if not already built: `swiftc -o .build/test-helper os-bar-agent-sessionsTests/TestHelper.swift`
+
+1. Build the Swift test helper if not already built: `swiftc -o .build/test-helper os-bar-agent-sessionsTests/TestHelper.swift`.
 2. Serialize `req` (Go `Request` struct) to JSON.
 3. Pipe the JSON into the test helper via stdin.
 4. Read the test helper's stdout and parse it as a JSON `Response` struct.
 5. Return `(*Response, nil)` on success, or `(nil, error)` on failure.
 
 ## Context
-- Action `"add_event"` calls `SessionStore.addEvent(dir:)`, returns updated events list and count.
-- Action `"add_events_batch"` calls `addEvent` for multiple dirs in order, returns final store state.
-- Action `"prune"` calls the internal prune logic (prune events older than 7 days), returns pruned events and count.
-- Action `"mark_consumed"` calls `SessionStore.markConsumed(dir:)`, returns updated events, count, and unconsumed_count.
-- Action `"unconsumed_count"` loads events from `events_json` and returns the count of events where `consumed == false`.
-- Action `"relative_time"` accepts `timestamp_iso` and `reference_iso` (optional; defaults to current time) and returns the formatted relative time string.
-- Action `"server_post"` starts an ephemeral HTTP server, sends an HTTP request with specified method/path/body/headers, and returns the HTTP status, body, and the store's events.
-- Action `"log_command_roundtrip"` encodes a `TestNotifyLogEntry` with `CommandLogDetails` to JSON, decodes it, and returns decoded values via response fields.
-- Action `"log_command_null_omit"` encodes a `TestNotifyLogEntry` *without* a command and verifies the `"command"` JSON key is absent.
+
+- Store actions: `"add_event"`, `"add_events_batch"`, `"prune"`, `"mark_consumed"`, `"unconsumed_count"`, `"relative_time"`.
+- Server action: `"server_post"` — embedded HTTP server with ephemeral port (not 38271).
+- Command-log actions: `"log_command_roundtrip"`, `"log_command_null_omit"`.
+- Notification actions: `"notification_diff"`, `"notification_content"`, `"notification_click"`.
 - All timestamps in events are ISO8601 strings (`"2006-01-02T15:04:05Z"`).
-- The test helper uses an ephemeral port for server tests (not 38271) to avoid conflicts.
-- `DOCTEST_ROOT` refers to the directory of this SETUP.md file.
+- `previous_json` / `current_json` are JSON arrays of `SessionEvent` for diff tests.
+- `is_baseline=true` on first poll seeds baseline without notifying.
 
 ```go
 import (
 	"encoding/json"
 	"fmt"
-	"os/exec"
-	"path/filepath"
-	"strings"
+	"os"
 	"testing"
 )
 
-// SessionEvent mirrors the Swift SessionEvent model.
-type SessionEvent struct {
+// eventFixture builds JSON event arrays for notification diff tests.
+type eventFixture struct {
 	ID        string `json:"id"`
 	Dir       string `json:"dir"`
 	Timestamp string `json:"timestamp"`
 	Consumed  bool   `json:"consumed"`
 }
 
-// Request is passed as JSON to the Swift test helper via stdin.
-type Request struct {
-	Action        string   `json:"action"`
-	Dir           string   `json:"dir,omitempty"`
-	Dirs          []string `json:"dirs,omitempty"`
-	EventsJSON    string   `json:"events_json,omitempty"`
-	TimestampISO  string   `json:"timestamp_iso,omitempty"`
-	ReferenceISO  string   `json:"reference_iso,omitempty"`
-	HTTPMethod    string   `json:"http_method,omitempty"`
-	HTTPPath      string   `json:"http_path,omitempty"`
-	HTTPBody      string   `json:"http_body,omitempty"`
-	ContentType   string   `json:"content_type,omitempty"`
-	// --- command-log test fields ---
-	LogDir        string   `json:"log_dir,omitempty"`
-	LogEvent      string   `json:"log_event,omitempty"`
-	LogCommand    string   `json:"log_command,omitempty"`
-	LogExitCode   int      `json:"log_exit_code,omitempty"`
-	LogStdout     string   `json:"log_stdout,omitempty"`
-	LogStderr     string   `json:"log_stderr,omitempty"`
-	LogDurationMs int      `json:"log_duration_ms,omitempty"`
+func buildEventsJSON(events []eventFixture) (string, error) {
+	b, err := json.Marshal(events)
+	if err != nil {
+		return "", fmt.Errorf("marshal events: %w", err)
+	}
+	return string(b), nil
 }
 
-// Response is parsed from the Swift test helper's stdout.
-type Response struct {
-	Events          []SessionEvent `json:"events"`
-	Count           int            `json:"count"`
-	UnconsumedCount int            `json:"unconsumed_count"`
-	HTTPStatus      int            `json:"http_status"`
-	HTTPBody        string         `json:"http_body"`
-	RelativeTime    string         `json:"relative_time"`
-	Error           string         `json:"error"`
-	LogEntryJSON    string         `json:"log_entry_json"`
+func readFixtureFile(name string) (string, error) {
+	b, err := os.ReadFile(name)
+	if err != nil {
+		return "", fmt.Errorf("read fixture %s: %w", name, err)
+	}
+	return string(b), nil
 }
 
-func Run(t *testing.T, req *Request) (*Response, error) {
-	projectRoot := filepath.Join(DOCTEST_ROOT, "..", "..")
-	helperPath := filepath.Join(projectRoot, ".build", "test-helper")
-
-	// Build the helper if needed (idempotent)
-	helperSrc := filepath.Join(projectRoot, "os-bar-agent-sessionsTests", "TestHelper.swift")
-	buildCmd := exec.Command("swiftc", "-o", helperPath, helperSrc)
-	if out, err := buildCmd.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("failed to build test helper: %w\n%s", err, out)
-	}
-
-	// Serialize request to JSON
-	reqJSON, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	// Run the test helper with the request on stdin
-	cmd := exec.Command(helperPath)
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get stdin pipe: %w", err)
-	}
-	go func() {
-		defer stdin.Close()
-		stdin.Write(reqJSON)
-		stdin.Write([]byte("\n"))
-	}()
-
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("test helper failed (exit code %v): %w\n%s",
-			cmd.ProcessState.ExitCode(), err, out)
-	}
-
-	var resp Response
-	if err := json.Unmarshal(out, &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse test helper output: %w\noutput: %s", err, out)
-	}
-
-	return &resp, nil
+func Setup(t *testing.T, req *Request) error {
+	t.Logf("session-notifications: root setup — test helper will be built in Run")
+	return nil
 }
 ```

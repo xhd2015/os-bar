@@ -1,3 +1,11 @@
+# Scenario
+
+**Feature**: type field accepted but not stored
+
+```
+POST with type -> dir stored
+```
+
 ## Steps
 1. Construct a JSON request body with an explicit `type` field: `{"type": "cursor", "dir": "/Users/test/cursor-project"}`.
 2. Call `Run(t, req)` with `action: "server_post"` and the body.

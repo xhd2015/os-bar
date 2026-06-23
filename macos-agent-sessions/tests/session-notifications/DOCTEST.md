@@ -1,9 +1,43 @@
 # Agent Session Notifications — Doc-Style Test Tree
 
-Test suite for the `SessionStore` and `SessionServer` components of the
-`macos-agent-sessions` menu bar app. Validates event storage rules
-(add, dedup, prune, cap, sort, relative-time formatting) and HTTP server
-behavior (POST /api/notify, error responses).
+Test suite for the `SessionStore`, `SessionServer`, and `SessionNotificationService`
+components of the `macos-agent-sessions` menu bar app. Validates event storage rules
+(add, dedup, prune, cap, sort, relative-time formatting), HTTP server behavior
+(POST /api/notify, error responses), and macOS user-notification logic (diff
+detection, notification content, click handler) without posting real
+`UNNotificationRequest` objects.
+
+## Version
+
+0.0.2
+
+# DSN (Domain Specific Notion)
+
+The **menu bar app** polls the Go **daemon** every two seconds via
+`SessionStore.refresh()` → `DaemonClient.listEvents()`. Session **events** are
+`{id, dir, timestamp, consumed}` records shown in the dropdown and bell badge.
+
+The **Swift test helper** (`TestHelper.swift`) mirrors production types and
+exposes JSON actions on stdin/stdout so the Go **doctest harness** can drive
+store, server, and notification logic without launching the full app.
+
+The **SessionStore** persists events locally (UserDefaults in production; in-memory
+in tests) with dedup-by-dir, cap-20, prune-7-days, and consumed tracking.
+
+The **SessionServer** accepts `POST /api/notify` with a project `dir` and stores
+events; error paths return 400/404/405.
+
+The **SessionNotificationService** (new) compares `previous` and `current` event
+snapshots after each poll. When a `(dir, timestamp)` pair is new relative to the
+previous snapshot—and the poll is not the **startup baseline**—it schedules a
+macOS user notification. **Notification content** uses title `Agent session
+finished`, body = basename(dir), subtitle = shortened parent path (cwd-relative,
+tilde-home, or absolute). **Click** on the notification opens the dir in VS Code
+and marks the event consumed (same as menu item click).
+
+Tests exercise diff/content/click **logic** via helper actions
+(`notification_diff`, `notification_content`, `notification_click`) without
+posting real notifications (not viable in CI).
 
 ## Decision Tree
 
@@ -15,91 +49,60 @@ session-notifications/                   ROOT: Request{Action, Dir, ...}, Respon
 │   └── [SETUP] req.Action ∈ store actions
 │   │
 │   ├── add-event/                       LEAF: add one event
-│   │   ├── SETUP → req.Action = "add_event", req.Dir = "/a"
-│   │   ├── ASSERT → count=1, events[0].dir="/a"
-│   │
-│   ├── dedup-dir/                       LEAF: same dir twice
-│   │   ├── SETUP → add "/a" twice
-│   │   ├── ASSERT → count=1, timestamp bumped
-│   │
+│   ├── dedup-dir/                       LEAF: same dir twice → timestamp bumped
 │   ├── prune-old/                       LEAF: 8-day-old event pruned
-│   │   ├── SETUP → preload event 8 days ago, action="prune"
-│   │   ├── ASSERT → count=0
-│   │
 │   ├── cap-20/                          LEAF: cap at 20
-│   │   ├── SETUP → add 21 distinct dirs
-│   │   ├── ASSERT → count=20, oldest evicted
-│   │
 │   ├── sort-order/                      LEAF: newest-first order
-│   │   ├── SETUP → add 3 events with known timestamps
-│   │   ├── ASSERT → events[0] is newest
-│   │
-│   ├── consumed-default/                 LEAF: new event → consumed=false
-│   │   ├── SETUP → add_event, dir="/a"
-│   │   ├── ASSERT → events[0].consumed==false, unconsumed_count==1
-│   │
-│   ├── consumed-dedup/                   LEAF: dedup → consumed=false again
-│   │   ├── SETUP → preload consumed=true, add same dir
-│   │   ├── ASSERT → count==1, events[0].consumed==false
-│   │
-│   ├── consumed-mark/                    LEAF: markConsumed flips to true
-│   │   ├── SETUP → preload consumed=false, mark_consumed same dir
-│   │   ├── ASSERT → events[0].consumed==true, unconsumed_count==0
-│   │
-│   ├── unconsumed-count/                 LEAF: mixed counts correctly
-│   │   ├── SETUP → preload 3 events (2 unconsumed, 1 consumed)
-│   │   ├── ASSERT → unconsumed_count==2
-│   │
+│   ├── consumed-default/                LEAF: new event → consumed=false
+│   ├── consumed-dedup/                  LEAF: dedup → consumed=false again
+│   ├── consumed-mark/                   LEAF: markConsumed flips to true
+│   ├── unconsumed-count/                LEAF: mixed counts correctly
+│   ├── command-log-serialize/           LEAF: encode→decode round-trip
+│   ├── command-log-null-omission/       LEAF: nil command omits JSON key
 │   └── relative-time/                   DECISION: format verification
-│       └── [SETUP] req.Action = "relative_time"
-│       │
 │       ├── sub-1m/                      LEAF: "<1m ago"
-│       │   ├── SETUP → timestamp 30s ago
-│       │   ├── ASSERT → relative_time = "<1m ago"
-│       │
 │       ├── exact-minutes/               LEAF: "Xm ago"
-│       │   ├── SETUP → timestamp 5m ago
-│       │   ├── ASSERT → relative_time = "5m ago"
-│       │
 │       └── exact-hours/                 LEAF: "Xh ago"
-│           ├── SETUP → timestamp 2h ago
-│           ├── ASSERT → relative_time = "2h ago"
 │
-├── command-log-serialize/           LEAF: encode→decode round-trip
-│   ├── SETUP → log_command_test with all fields set
-│   ├── ASSERT → decoded values match originals, JSON has "command" key
+├── server/                              DECISION: component = server
+│   └── [SETUP] req.Action ∈ server actions
+│   │
+│   ├── post-notify/                     LEAF: valid POST /api/notify
+│   ├── type-ignored/                    LEAF: type field accepted and ignored
+│   ├── bad-json/                        LEAF: invalid JSON → 400
+│   ├── missing-dir/                     LEAF: missing or empty dir → 400
+│   ├── wrong-method/                    LEAF: GET /api/notify → 405
+│   └── wrong-path/                      LEAF: POST /api/wrong → 404
 │
-├── command-log-null-omission/       LEAF: nil command omits JSON key
-│   ├── SETUP → log_command_test without command fields
-│   ├── ASSERT → JSON does NOT contain "command" key
-│
-└── server/                              DECISION: component = server
-    └── [SETUP] req.Action ∈ server actions
+└── macos-notification/                  DECISION: component = notification service
+    └── [SETUP] req.Action ∈ notification actions
     │
-    ├── post-notify/                     LEAF: valid POST /api/notify
-    │   ├── SETUP → POST {"type":"X","dir":"/p"}, Content-Type: application/json
-    │   ├── ASSERT → http_status=200, body={"ok":true}, event in store
+    ├── diff/                            DECISION: dirsNeedingNotification logic
+    │   ├── new-event/                   LEAF: one new dir → notify
+    │   ├── multiple-new-events/         LEAF: two new dirs → notify both
+    │   ├── dedup-bump/                  LEAF: same dir, new timestamp → notify
+    │   ├── unchanged-poll/              LEAF: identical snapshot → no notify
+    │   ├── consumed-only-change/          LEAF: consumed flips, same timestamp → no notify
+    │   └── baseline-skip/               LEAF: first snapshot seeds baseline → no notify
     │
-    ├── type-ignored/                    LEAF: type field accepted and ignored
-    │   ├── SETUP → POST with type="cursor", dir="/p2"
-    │   ├── ASSERT → http_status=200, dir stored, type not in events
+    ├── content/                         DECISION: notification text
+    │   ├── basename-body/               LEAF: body = last path component
+    │   ├── subtitle-home-tilde/         LEAF: ~/Projects/foo → subtitle "~/Projects"
+    │   ├── subtitle-cwd-relative/       LEAF: cwd=/work, dir=/work/a/b → subtitle "a"
+    │   └── subtitle-absolute-parent/    LEAF: dir outside home/cwd → absolute parent
     │
-    ├── bad-json/                        LEAF: invalid JSON → 400
-    │   ├── SETUP → POST with unparseable body
-    │   ├── ASSERT → http_status=400
-    │
-    ├── missing-dir/                     LEAF: missing or empty dir → 400
-    │   ├── SETUP → POST {"type":"X"} (no dir), then POST {"type":"X","dir":""}
-    │   ├── ASSERT → both return http_status=400
-    │
-    ├── wrong-method/                    LEAF: GET /api/notify → 405
-    │   ├── SETUP → GET /api/notify
-    │   ├── ASSERT → http_status=405
-    │
-    └── wrong-path/                      LEAF: POST /api/wrong → 404
-        ├── SETUP → POST /api/wrong
-        ├── ASSERT → http_status=404
+    └── click/                           DECISION: click handler
+        └── opens-dir-and-consumes/      LEAF: simulate click userInfo → openDir + consume
 ```
+
+## Parameter Ranking (macos-notification)
+
+| Rank | Parameter | Branches |
+|------|-----------|----------|
+| 1 | Operation | `notification_diff`, `notification_content`, `notification_click` |
+| 2 | Diff transition | new, multiple-new, dedup-bump, unchanged, consumed-only, baseline |
+| 3 | Content context | basename only, home-tilde, cwd-relative, absolute parent |
+| 4 | Click input | userInfo dir → opened_dir + consumed_dir |
 
 ## Test Index
 
@@ -125,6 +128,17 @@ session-notifications/                   ROOT: Request{Action, Dir, ...}, Respon
 | 18 | `store/unconsumed-count/` | Mixed consumed/unconsumed → correct count |
 | 19 | `store/command-log-serialize/` | Encode→decode round-trip with command fields survived |
 | 20 | `store/command-log-null-omission/` | Nil command omits `"command"` JSON key |
+| 21 | `macos-notification/diff/new-event/` | Empty previous + one new dir → notify |
+| 22 | `macos-notification/diff/multiple-new-events/` | Two new dirs in one poll → notify both |
+| 23 | `macos-notification/diff/dedup-bump/` | Same dir, new timestamp → notify |
+| 24 | `macos-notification/diff/unchanged-poll/` | Identical snapshots → no notify |
+| 25 | `macos-notification/diff/consumed-only-change/` | Consumed flips, same timestamp → no notify |
+| 26 | `macos-notification/diff/baseline-skip/` | First poll baseline → no notify |
+| 27 | `macos-notification/content/basename-body/` | Body = basename, title fixed |
+| 28 | `macos-notification/content/subtitle-home-tilde/` | Home-relative parent → `~/Projects` |
+| 29 | `macos-notification/content/subtitle-cwd-relative/` | Cwd-relative parent → `a` |
+| 30 | `macos-notification/content/subtitle-absolute-parent/` | Outside home/cwd → absolute parent |
+| 31 | `macos-notification/click/opens-dir-and-consumes/` | Click userInfo → open + consume recorded |
 
 ## Coverage Map
 
@@ -135,31 +149,141 @@ session-notifications/                   ROOT: Request{Action, Dir, ...}, Respon
 | Prune events older than 7 days | `prune-old` | ✓ |
 | Cap at 20, evict oldest | `cap-20` | ✓ |
 | Sort newest-first | `sort-order` | ✓ |
-| Relative time: `<1m ago` | `sub-1m` | ✓ |
-| Relative time: `Xm ago` | `exact-minutes` | ✓ |
-| Relative time: `Xh ago` | `exact-hours` | ✓ |
+| Relative time formats | `relative-time/*` | ✓ |
 | Valid POST /api/notify | `post-notify` | ✓ |
-| Type field accepted + ignored | `type-ignored` | ✓ |
-| Invalid JSON body | `bad-json` | ✓ |
-| Missing/empty dir | `missing-dir` | ✓ |
-| Wrong HTTP method | `wrong-method` | ✓ |
-| Wrong URL path | `wrong-path` | ✓ |
-| New event unconsumed by default | `consumed-default` | ✓ |
-| Dedup resets consumed | `consumed-dedup` | ✓ |
-| Mark consumed flips flag | `consumed-mark` | ✓ |
-| Unconsumed count with mixed events | `unconsumed-count` | ✓ |
-| Command log encode→decode round-trip | `command-log-serialize` | ✓ |
-| Command log nil omission from JSON | `command-log-null-omission` | ✓ |
+| HTTP error paths | `server/*` | ✓ |
+| Consumed flag semantics | `consumed-*` | ✓ |
+| Command log JSON | `command-log-*` | ✓ |
+| Notify on new (dir, timestamp) | `diff/new-event` | ✓ |
+| Notify on multiple new dirs | `diff/multiple-new-events` | ✓ |
+| Re-notify on dedup bump | `diff/dedup-bump` | ✓ |
+| Skip identical poll | `diff/unchanged-poll` | ✓ |
+| Skip consumed-only change | `diff/consumed-only-change` | ✓ |
+| Startup baseline skip | `diff/baseline-skip` | ✓ |
+| Notification title/body | `content/basename-body` | ✓ |
+| Subtitle: tilde-home | `content/subtitle-home-tilde` | ✓ |
+| Subtitle: cwd-relative | `content/subtitle-cwd-relative` | ✓ |
+| Subtitle: absolute parent | `content/subtitle-absolute-parent` | ✓ |
+| Click opens dir + consumes | `click/opens-dir-and-consumes` | ✓ |
 
 ## How to Run
 
 ```sh
-# Automated tests (Go doctest framework)
-cd macos-agent-sessions && doctest test ./tests/session-notifications
-
-# Vet the test tree structure
+# Vet test tree structure
 cd macos-agent-sessions && doctest vet ./tests/session-notifications
 
-# Run with verbose output
+# Run all tests (RED until SessionNotificationService + TestHelper actions exist)
+cd macos-agent-sessions && doctest test ./tests/session-notifications
+
+# Run notification subtree only
+cd macos-agent-sessions && doctest test ./tests/session-notifications/macos-notification/...
+
+# Verbose
 cd macos-agent-sessions && doctest test -v ./tests/session-notifications/...
+```
+
+```go
+import (
+	"encoding/json"
+	"fmt"
+	"os/exec"
+	"path/filepath"
+	"testing"
+)
+
+// SessionEvent mirrors the Swift SessionEvent model.
+type SessionEvent struct {
+	ID        string `json:"id"`
+	Dir       string `json:"dir"`
+	Timestamp string `json:"timestamp"`
+	Consumed  bool   `json:"consumed"`
+}
+
+// Request is passed as JSON to the Swift test helper via stdin.
+type Request struct {
+	Action        string   `json:"action"`
+	Dir           string   `json:"dir,omitempty"`
+	Dirs          []string `json:"dirs,omitempty"`
+	EventsJSON    string   `json:"events_json,omitempty"`
+	TimestampISO  string   `json:"timestamp_iso,omitempty"`
+	ReferenceISO  string   `json:"reference_iso,omitempty"`
+	HTTPMethod    string   `json:"http_method,omitempty"`
+	HTTPPath      string   `json:"http_path,omitempty"`
+	HTTPBody      string   `json:"http_body,omitempty"`
+	ContentType   string   `json:"content_type,omitempty"`
+	// --- command-log test fields ---
+	LogDir        string `json:"log_dir,omitempty"`
+	LogEvent      string `json:"log_event,omitempty"`
+	LogCommand    string `json:"log_command,omitempty"`
+	LogExitCode   int    `json:"log_exit_code,omitempty"`
+	LogStdout     string `json:"log_stdout,omitempty"`
+	LogStderr     string `json:"log_stderr,omitempty"`
+	LogDurationMs int    `json:"log_duration_ms,omitempty"`
+	// --- macos-notification test fields ---
+	PreviousJSON string `json:"previous_json,omitempty"`
+	CurrentJSON  string `json:"current_json,omitempty"`
+	IsBaseline   bool   `json:"is_baseline,omitempty"`
+	Home         string `json:"home,omitempty"`
+	CWD          string `json:"cwd,omitempty"`
+}
+
+// Response is parsed from the Swift test helper's stdout.
+type Response struct {
+	Events          []SessionEvent `json:"events"`
+	Count           int            `json:"count"`
+	UnconsumedCount int            `json:"unconsumed_count"`
+	HTTPStatus      int            `json:"http_status"`
+	HTTPBody        string         `json:"http_body"`
+	RelativeTime    string         `json:"relative_time"`
+	Error           string         `json:"error"`
+	LogEntryJSON    string         `json:"log_entry_json"`
+	// --- macos-notification response fields ---
+	NotifyDirs  []string `json:"notify_dirs,omitempty"`
+	Title       string   `json:"title,omitempty"`
+	Body        string   `json:"body,omitempty"`
+	Subtitle    string   `json:"subtitle,omitempty"`
+	UserInfoDir string   `json:"user_info_dir,omitempty"`
+	OpenedDir   string   `json:"opened_dir,omitempty"`
+	ConsumedDir string   `json:"consumed_dir,omitempty"`
+}
+
+func Run(t *testing.T, req *Request) (*Response, error) {
+	projectRoot := filepath.Join(DOCTEST_ROOT, "..", "..")
+	helperPath := filepath.Join(projectRoot, ".build", "test-helper")
+
+	helperSrc := filepath.Join(projectRoot, "os-bar-agent-sessionsTests", "TestHelper.swift")
+	buildCmd := exec.Command("swiftc", "-o", helperPath, helperSrc)
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("failed to build test helper: %w\n%s", err, out)
+	}
+
+	reqJSON, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	cmd := exec.Command(helperPath)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get stdin pipe: %w", err)
+	}
+	go func() {
+		defer stdin.Close()
+		stdin.Write(reqJSON)
+		stdin.Write([]byte("\n"))
+	}()
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("test helper failed (exit code %v): %w\n%s",
+			cmd.ProcessState.ExitCode(), err, out)
+	}
+
+	var resp Response
+	if err := json.Unmarshal(out, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse test helper output: %w\noutput: %s", err, out)
+	}
+
+	return &resp, nil
+}
 ```

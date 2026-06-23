@@ -1,3 +1,5 @@
+# Scenario
+
 ## Preconditions
 - Tests in this subtree install the opencode plugin (`agent-sessions.ts`).
 

@@ -1,3 +1,11 @@
+# Scenario
+
+**Feature**: dedup resets consumed to false
+
+```
+consumed=true preload -> add same dir -> consumed=false
+```
+
 ## Steps
 1. Preload the store with one event at dir `"/d"` that has `consumed: true`.
 2. Call `Run(t, req)` with `action: "add_event"` and `dir: "/d"`.

@@ -1,3 +1,11 @@
+# Scenario
+
+**Feature**: unconsumed count with mixed events
+
+```
+2 unconsumed + 1 consumed -> count=2
+```
+
 ## Steps
 1. Preload the store with 3 events: two unconsumed, one consumed.
 2. Call `Run(t, req)` with `action: "unconsumed_count"` and the preloaded `events_json`.

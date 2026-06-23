@@ -1,3 +1,11 @@
+# Scenario
+
+**Feature**: add one event to empty store
+
+```
+add_event(/a) -> count=1
+```
+
 ## Steps
 1. Call `Run(t, req)` with `action: "add_event"` and `dir: "/Users/test/project-a"`.
 2. Capture the `Response` with the updated `events` array and `count`.

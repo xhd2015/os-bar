@@ -1,3 +1,7 @@
+# Scenario
+
+**Feature**: immediate fetch snapshot — CPU and MEM range validation
+
 ## Preconditions
 - A mock host-info fetcher is injected into `SystemMonitor` that returns known, deterministic values.
 - The action under test is `"fetch"` — an immediate snapshot without waiting for any timer tick.

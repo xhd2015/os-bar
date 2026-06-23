@@ -1,3 +1,5 @@
+# Scenario
+
 ## Steps
 1. Load `testdata/grok-foreign-hooks.json` into `PreExistingGrokHooksJSON` as `other-hooks.json`.
 2. Call `Run(t, req)` with `Target: "grok"`, local install.

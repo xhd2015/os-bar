@@ -1,3 +1,5 @@
+# Scenario
+
 ## Steps
 1. Set `PreExistingHooksJSON` to invalid JSON `{not json`.
 2. Call `Run(t, req)` with local codex install.

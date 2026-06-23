@@ -1,3 +1,11 @@
+# Scenario
+
+**Feature**: embedded HTTP server for /api/notify
+
+```
+server_post -> POST /api/notify -> http_status + events
+```
+
 ## Preconditions
 - All tests in this subtree exercise the HTTP server component.
 - The test helper starts an ephemeral HTTP server (on a random available port, not 38271) and sends an HTTP request to it.

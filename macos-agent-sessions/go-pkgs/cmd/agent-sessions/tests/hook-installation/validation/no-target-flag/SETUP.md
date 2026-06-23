@@ -1,3 +1,5 @@
+# Scenario
+
 ## Steps
 1. Call `Run(t, req)` with `Action: "install"` and no `Target` (no `--pi/--grok/--codex/--opencode` flags).
 

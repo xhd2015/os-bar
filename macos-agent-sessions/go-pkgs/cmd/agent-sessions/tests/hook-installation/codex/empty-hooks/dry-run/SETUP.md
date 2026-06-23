@@ -1,3 +1,5 @@
+# Scenario
+
 ## Steps
 1. Call `Run(t, req)` with `Target: "codex"`, `DryRun: true`, `Global: false`, no pre-existing hooks.
 

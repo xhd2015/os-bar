@@ -1,3 +1,5 @@
+# Scenario
+
 ## Preconditions
 - Detection tests run `agent-sessions integrations --json` only — no UI, no Accessibility permission required.
 - v1 scope is global: all detection leaves use `--global`.

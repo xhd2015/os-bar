@@ -1,3 +1,11 @@
+# Scenario
+
+**Feature**: dedup bumps timestamp for same dir
+
+```
+add_event(/x) twice -> count=1, newer timestamp
+```
+
 ## Steps
 1. Call `Run(t, req)` with `action: "add_events_batch"` and `dirs: ["/Users/test/project-x", "/Users/test/project-x"]`.
 2. The test helper calls `addEvent` twice for the same dir.

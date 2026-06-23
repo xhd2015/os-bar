@@ -1,3 +1,5 @@
+# Scenario
+
 ## Steps
 1. Call `Run(t, req)` with `Target: "opencode"`, `Global: false`.
 
