@@ -60,6 +60,10 @@ struct SessionEvent: Codable, Equatable {
     }
 }
 
+func normalizeDir(_ path: String) -> String {
+    (path as NSString).standardizingPath
+}
+
 // MARK: - In-Memory SessionStore (for testing)
 
 class TestSessionStore {
@@ -70,11 +74,12 @@ class TestSessionStore {
     // MARK: Add Event
 
     func addEvent(dir: String, timestamp: Date? = nil) {
-        if let existingIndex = events.firstIndex(where: { $0.dir == dir }) {
+        let canonical = normalizeDir(dir)
+        if let existingIndex = events.firstIndex(where: { normalizeDir($0.dir) == canonical }) {
             // Bump timestamp, reset consumed to false
-            events[existingIndex] = SessionEvent(dir: dir, timestamp: timestamp ?? Date(), consumed: false)
+            events[existingIndex] = SessionEvent(dir: canonical, timestamp: timestamp ?? Date(), consumed: false)
         } else {
-            events.append(SessionEvent(dir: dir, timestamp: timestamp ?? Date()))
+            events.append(SessionEvent(dir: canonical, timestamp: timestamp ?? Date()))
         }
         sortAndCap()
     }
@@ -82,7 +87,8 @@ class TestSessionStore {
     // MARK: Mark Consumed
 
     func markConsumed(dir: String) {
-        guard let index = events.firstIndex(where: { $0.dir == dir }) else { return }
+        let canonical = normalizeDir(dir)
+        guard let index = events.firstIndex(where: { normalizeDir($0.dir) == canonical }) else { return }
         events[index].consumed = true
     }
 
@@ -163,6 +169,14 @@ struct Request: Codable {
     // --- logs-jsonl viewer test fields ---
     let log_entry: TestLogEntryInput?
     let poll_sequence: [PollStepInput]?
+    // --- session menu item test fields ---
+    let consumed: Bool?
+    // --- daemon quit test fields ---
+    let spawned_pid: Int?
+    let spawned_running: Bool?
+    let pid_file_contents: String?
+    let state_dir_env_value: String?
+    let launch_arguments: [String]?
 }
 
 struct TestLogEntryInput: Codable {
@@ -215,6 +229,14 @@ struct Response: Codable {
     var pretty_json: String = ""
     var poll_entry_counts: [Int] = []
     var detected_new: Bool = false
+    // --- session menu item response fields ---
+    var display_label: String = ""
+    var menu_tooltip: String = ""
+    // --- daemon quit response fields ---
+    var quit_target_kind: String = ""
+    var quit_target_pid: Int = 0
+    var state_dir: String = ""
+    var should_terminate_on_quit: Bool = false
 }
 
 // MARK: - ISO8601 Date Helpers
@@ -414,6 +436,89 @@ enum TestOpenLogsMenuState {
 enum TestLogsViewerMenuState {
     static func menuState() -> (label: String, enabled: Bool) {
         ("Logs", true)
+    }
+}
+
+enum TestDaemonShutdown {
+    static let agentSessions = DaemonShutdownConfig(
+        stateDirEnvKey: "AGENT_SESSIONS_STATE_DIR",
+        defaultRelativeStateDir: ".os-bar/agent-sessions"
+    )
+
+    enum Target: Equatable {
+        case none
+        case spawned(pid: Int32)
+        case pidFile(pid: Int32)
+    }
+
+    static func shouldTerminateOnQuit(arguments: [String]) -> Bool {
+        !arguments.contains("-uiTestingOpenSettings")
+    }
+
+    static func resolveStateDir(
+        config: DaemonShutdownConfig,
+        env: [String: String],
+        home: String
+    ) -> String {
+        if let stateDir = env[config.stateDirEnvKey], !stateDir.isEmpty {
+            return stateDir
+        }
+        return (home as NSString).appendingPathComponent(config.defaultRelativeStateDir)
+    }
+
+    static func pidFilePath(stateDir: String) -> String {
+        (stateDir as NSString).appendingPathComponent("daemon.pid")
+    }
+
+    static func parsePID(_ contents: String) -> Int32? {
+        let trimmed = contents.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let pid = Int32(trimmed), pid > 0 else {
+            return nil
+        }
+        return pid
+    }
+
+    static func quitTarget(
+        spawnedPID: Int32?,
+        spawnedRunning: Bool,
+        pidFileContents: String?
+    ) -> Target {
+        if let spawnedPID, spawnedRunning {
+            return .spawned(pid: spawnedPID)
+        }
+        if let pidFileContents, let pid = parsePID(pidFileContents) {
+            return .pidFile(pid: pid)
+        }
+        return .none
+    }
+
+    static func encodeTarget(_ target: Target) -> (kind: String, pid: Int) {
+        switch target {
+        case .none:
+            return ("none", 0)
+        case .spawned(let pid):
+            return ("spawned", Int(pid))
+        case .pidFile(let pid):
+            return ("pid_file", Int(pid))
+        }
+    }
+}
+
+struct DaemonShutdownConfig: Equatable {
+    let stateDirEnvKey: String
+    let defaultRelativeStateDir: String
+}
+
+enum TestSessionMenuItemFormatter {
+    static func tooltip(dir: String) -> String {
+        dir
+    }
+
+    static func displayLabel(dir: String, consumed: Bool, relativeTime: String) -> String {
+        let dot = consumed ? "  " : "● "
+        let name = URL(fileURLWithPath: dir).lastPathComponent
+        let padded = name.padding(toLength: 22, withPad: " ", startingAt: 0)
+        return "\(dot)\(padded) \(relativeTime)"
     }
 }
 
@@ -988,6 +1093,66 @@ func runHelper() -> Never {
         let state = TestLogsViewerMenuState.menuState()
         response.menu_label = state.label
         response.menu_enabled = state.enabled
+
+    case "daemon_quit_plan":
+        let spawnedPID = request.spawned_pid.map { Int32($0) }
+        let spawnedRunning = request.spawned_running ?? false
+        let target = TestDaemonShutdown.quitTarget(
+            spawnedPID: spawnedPID,
+            spawnedRunning: spawnedRunning,
+            pidFileContents: request.pid_file_contents
+        )
+        let encoded = TestDaemonShutdown.encodeTarget(target)
+        response.quit_target_kind = encoded.kind
+        response.quit_target_pid = encoded.pid
+
+        var env = ProcessInfo.processInfo.environment
+        if let override = request.state_dir_env_value {
+            env[TestDaemonShutdown.agentSessions.stateDirEnvKey] = override
+        }
+        let home = request.home ?? "/Users/tester"
+        response.state_dir = TestDaemonShutdown.resolveStateDir(
+            config: TestDaemonShutdown.agentSessions,
+            env: env,
+            home: home
+        )
+
+    case "daemon_quit_should_terminate":
+        let args = request.launch_arguments ?? []
+        response.should_terminate_on_quit = TestDaemonShutdown.shouldTerminateOnQuit(arguments: args)
+
+    case "session_menu_item_state":
+        guard let dir = request.dir else {
+            response.error = "missing dir for session_menu_item_state"
+            break
+        }
+
+        let consumed = request.consumed ?? false
+        let timestamp: Date
+        if let tsISO = request.timestamp_iso,
+           let parsed = stringToIso(tsISO) {
+            timestamp = parsed
+        } else {
+            timestamp = Date()
+        }
+
+        let reference: Date
+        if let refISO = request.reference_iso,
+           let ref = stringToIso(refISO) {
+            reference = ref
+        } else {
+            reference = Date()
+        }
+
+        let store = TestSessionStore()
+        let relativeTime = store.relativeTime(for: timestamp, reference: reference)
+        response.relative_time = relativeTime
+        response.display_label = TestSessionMenuItemFormatter.displayLabel(
+            dir: dir,
+            consumed: consumed,
+            relativeTime: relativeTime
+        )
+        response.menu_tooltip = TestSessionMenuItemFormatter.tooltip(dir: dir)
 
     case "logs_viewer_format_entry":
         guard let entry = request.log_entry else {

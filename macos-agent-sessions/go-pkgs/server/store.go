@@ -232,13 +232,18 @@ func (s *store) nextTimestamp() time.Time {
 	return now
 }
 
+func normalizeDir(dir string) string {
+	return filepath.Clean(dir)
+}
+
 func (s *store) addEvent(dir string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	dir = normalizeDir(dir)
 	now := formatTimestamp(s.nextTimestamp())
 	for i, ev := range s.events {
-		if ev.Dir == dir {
+		if normalizeDir(ev.Dir) == dir {
 			s.events[i].Timestamp = now
 			s.events[i].Consumed = false
 			sortAndCapEvents(&s.events)
@@ -259,8 +264,10 @@ func (s *store) addEvent(dir string) {
 func (s *store) markConsumed(dir string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	dir = normalizeDir(dir)
 	for i, ev := range s.events {
-		if ev.Dir == dir {
+		if normalizeDir(ev.Dir) == dir {
+			s.events[i].Dir = dir
 			s.events[i].Consumed = true
 			_ = s.saveEventsLocked()
 			return
@@ -343,9 +350,10 @@ func pruneAndSortEvents(loaded []SessionEvent) []SessionEvent {
 }
 
 func removeEventsByDir(events []SessionEvent, dir string) []SessionEvent {
+	dir = normalizeDir(dir)
 	out := events[:0]
 	for _, ev := range events {
-		if ev.Dir != dir {
+		if normalizeDir(ev.Dir) != dir {
 			out = append(out, ev)
 		}
 	}

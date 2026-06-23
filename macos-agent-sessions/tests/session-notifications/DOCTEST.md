@@ -50,6 +50,7 @@ session-notifications/                   ROOT: Request{Action, Dir, ...}, Respon
 │   │
 │   ├── add-event/                       LEAF: add one event
 │   ├── dedup-dir/                       LEAF: same dir twice → timestamp bumped
+│   ├── dedup-trailing-slash/            LEAF: dir vs dir/ → single canonical event
 │   ├── prune-old/                       LEAF: 8-day-old event pruned
 │   ├── cap-20/                          LEAF: cap at 20
 │   ├── sort-order/                      LEAF: newest-first order
@@ -110,6 +111,7 @@ session-notifications/                   ROOT: Request{Action, Dir, ...}, Respon
 |---|------|-------------|
 | 1 | `store/add-event/` | Add one event, verify count=1 and dir matches |
 | 2 | `store/dedup-dir/` | Add same dir twice, count stays 1, timestamp updated |
+| 2b | `store/dedup-trailing-slash/` | Dir with/without trailing slash → count 1 |
 | 3 | `store/prune-old/` | Preload 8-day-old event, load prunes it, count=0 |
 | 4 | `store/cap-20/` | Add 21 distinct dirs, cap at 20, oldest evicted |
 | 5 | `store/sort-order/` | Add 3 events, verify newest-first ordering |
@@ -146,6 +148,7 @@ session-notifications/                   ROOT: Request{Action, Dir, ...}, Respon
 |----------|------|----------|
 | Add single event | `add-event` | ✓ |
 | Dedup by dir (bump timestamp) | `dedup-dir` | ✓ |
+| Dedup trailing-slash paths | `dedup-trailing-slash` | ✓ (RED until normalized) |
 | Prune events older than 7 days | `prune-old` | ✓ |
 | Cap at 20, evict oldest | `cap-20` | ✓ |
 | Sort newest-first | `sort-order` | ✓ |

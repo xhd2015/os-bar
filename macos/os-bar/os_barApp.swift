@@ -1,6 +1,15 @@
 import SwiftUI
 import ServiceManagement
 
+class AppDelegate: NSObject, NSApplicationDelegate {
+    weak var monitor: SystemMonitor?
+
+    func applicationWillTerminate(_ notification: Notification) {
+        monitor?.stop()
+        monitor?.terminateDaemon()
+    }
+}
+
 enum BarMetric: String, CaseIterable {
     case cpu
     case mem
@@ -8,11 +17,15 @@ enum BarMetric: String, CaseIterable {
 
 @main
 struct os_barApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var monitor = SystemMonitor()
     @AppStorage("barMetric") private var barMetric: BarMetric = .cpu
     @AppStorage("autoStart") private var autoStart = false
 
     init() {
+        let monitor = SystemMonitor()
+        _monitor = StateObject(wrappedValue: monitor)
+        appDelegate.monitor = monitor
         // Sync toggle with actual system state
         if #available(macOS 13.0, *) {
             _autoStart.wrappedValue = SMAppService.mainApp.status == .enabled

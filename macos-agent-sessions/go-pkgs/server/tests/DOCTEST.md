@@ -68,6 +68,7 @@ server/tests/                                 ROOT: Request{Action, Port, StateD
 │   └── [SETUP] exercises store via HTTP after notify
 │   │
 │   ├── dedup-bump/                           LEAF: same dir twice → count 1, newer ts
+│   ├── dedup-trailing-slash/                 LEAF: dir vs dir/ → count 1, canonical dir
 │   ├── cap-20/                               LEAF: 21 dirs → list len 20
 │   ├── consume-event/                        LEAF: POST /api/events/consume
 │   └── prune-on-load/                        LEAF: seed 8-day-old event, restart, gone
@@ -103,6 +104,7 @@ server/tests/                                 ROOT: Request{Action, Port, StateD
 | 8 | `sessions-api/wrong-method/` | `GET /api/notify` → 405 |
 | 9 | `sessions-api/wrong-path/` | `POST /api/wrong` → 404 |
 | 10 | `store-rules/dedup-bump/` | Re-notify same dir bumps timestamp, count stays 1 |
+| 10b | `store-rules/dedup-trailing-slash/` | Dir with/without trailing slash deduped to one |
 | 11 | `store-rules/cap-20/` | 21 distinct dirs capped to 20 events |
 | 12 | `store-rules/consume-event/` | `POST /api/events/consume` marks `consumed=true` |
 | 13 | `store-rules/prune-on-load/` | 8-day-old seeded event pruned on daemon load |

@@ -62,6 +62,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var cursorPushCount = 0
     private var loadingCursor: NSCursor?
 
+    func applicationWillTerminate(_ notification: Notification) {
+        DaemonShutdown.terminateOnQuit(
+            config: DaemonShutdown.agentSessions,
+            spawnedProcess: daemonProcess
+        )
+        daemonProcess = nil
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         if ProcessInfo.processInfo.arguments.contains("-uiTestingOpenSettings") {
             Task { @MainActor in
@@ -363,11 +371,6 @@ struct AgentSessionApp: App {
         }
     }
 
-    private func basename(_ path: String) -> String {
-        let url = URL(fileURLWithPath: path)
-        return url.lastPathComponent
-    }
-
     private func openInCode(_ dir: String) {
         appDelegate.openDir(dir)
     }
@@ -396,10 +399,12 @@ private struct MenuBarDropdownContent: View {
                         openInCode(event.dir)
                         store.markConsumed(dir: event.dir)
                     } label: {
-                        let dot = event.consumed ? "  " : "● "
-                        let name = basename(event.dir).padding(toLength: 22, withPad: " ", startingAt: 0)
                         let time = store.relativeTime(for: event.timestamp)
-                        Text("\(dot)\(name) \(time)")
+                        Text(SessionMenuItemFormatter.displayLabel(
+                            dir: event.dir,
+                            consumed: event.consumed,
+                            relativeTime: time
+                        ))
                             .font(.system(.body, design: .monospaced))
                             .lineLimit(1)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -407,6 +412,7 @@ private struct MenuBarDropdownContent: View {
                             .padding(.vertical, 3)
                     }
                     .buttonStyle(.plain)
+                    .help(SessionMenuItemFormatter.tooltip(dir: event.dir))
                 }
             }
 
@@ -466,11 +472,6 @@ private struct MenuBarDropdownContent: View {
         .onAppear {
             Task { await openLogs.refresh() }
         }
-    }
-
-    private func basename(_ path: String) -> String {
-        let url = URL(fileURLWithPath: path)
-        return url.lastPathComponent
     }
 }
 

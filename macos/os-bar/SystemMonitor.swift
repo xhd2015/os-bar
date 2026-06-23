@@ -128,6 +128,14 @@ final class SystemMonitor: ObservableObject {
         timer = nil
     }
 
+    func terminateDaemon() {
+        DaemonShutdown.terminateOnQuit(
+            config: DaemonShutdown.osBar,
+            spawnedProcess: daemonProcess
+        )
+        daemonProcess = nil
+    }
+
     @MainActor
     func fetchMetrics() async {
         do {
@@ -187,4 +195,5 @@ final class SystemMonitor: ObservableObject {
         }
         return "/usr/local/bin/os-bar-daemon"
     }
+
 }
