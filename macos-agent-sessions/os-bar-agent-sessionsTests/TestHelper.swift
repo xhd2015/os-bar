@@ -29,6 +29,15 @@ struct TestNotifyLogEntry: Codable {
     var command: CommandLogDetails? = nil
 }
 
+/// Full log entry mirror for viewer prettify round-trip tests.
+struct TestNotifyLogEntryFull: Codable {
+    let source: String
+    let timestamp: Date
+    let dir: String
+    let event: String?
+    var command: CommandLogDetails? = nil
+}
+
 struct SessionEvent: Codable, Equatable {
     let id: UUID
     let dir: String
@@ -151,6 +160,21 @@ struct Request: Codable {
     let storage_path: String?
     let seed_log_file: Bool?
     let info_error: String?
+    // --- logs-jsonl viewer test fields ---
+    let log_entry: TestLogEntryInput?
+    let poll_sequence: [PollStepInput]?
+}
+
+struct TestLogEntryInput: Codable {
+    let source: String
+    let timestamp: String
+    let dir: String
+    let event: String?
+    let command: CommandLogDetails?
+}
+
+struct PollStepInput: Codable {
+    let entries: [TestLogEntryInput]
 }
 
 // MARK: - JSON Response to test framework
@@ -185,6 +209,12 @@ struct Response: Codable {
     var select_root: String = ""
     var menu_label: String = ""
     var menu_enabled: Bool = false
+    // --- logs-jsonl viewer response fields ---
+    var display_line: String = ""
+    var detail_lines: [String] = []
+    var pretty_json: String = ""
+    var poll_entry_counts: [Int] = []
+    var detected_new: Bool = false
 }
 
 // MARK: - ISO8601 Date Helpers
@@ -353,7 +383,7 @@ struct TestLogsFinderPlanResult {
 }
 
 enum TestLogsFinderPlan {
-    static let logFileName = "notify-logs.json"
+    static let logFileName = "notify-logs.jsonl"
 
     static func plan(storagePath: String) -> TestLogsFinderPlanResult {
         let logPath = (storagePath as NSString).appendingPathComponent(logFileName)
@@ -375,9 +405,87 @@ enum TestLogsFinderPlan {
 enum TestOpenLogsMenuState {
     static func menuState(infoError: String?) -> (label: String, enabled: Bool) {
         if let infoError, !infoError.isEmpty {
-            return ("Open Logs (daemon unreachable)", false)
+            return ("Show Logs in Finder (daemon unreachable)", false)
         }
-        return ("Open Logs", true)
+        return ("Show Logs in Finder", true)
+    }
+}
+
+enum TestLogsViewerMenuState {
+    static func menuState() -> (label: String, enabled: Bool) {
+        ("Logs", true)
+    }
+}
+
+enum TestLogsEntryFormatter {
+    static func formatDisplayLine(source: String, timestamp: String, dir: String, event: String?) -> String {
+        let basename = URL(fileURLWithPath: dir).lastPathComponent
+        let eventPart = event.map { " \($0)" } ?? ""
+        return "\(timestamp) \(source) \(basename)\(eventPart)"
+    }
+
+    static func formatCommandDetails(event: String?, command: CommandLogDetails?) -> [String] {
+        guard event == "command.executed", let command else {
+            return []
+        }
+        return [
+            "command: \(command.command)",
+            "exit code: \(command.exitCode)",
+            "duration: \(command.durationMs)ms",
+            "stdout: \(ioDisplayText(command.stdout))",
+            "stderr: \(ioDisplayText(command.stderr))",
+        ]
+    }
+
+    private static func ioDisplayText(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "(empty)" : trimmed
+    }
+}
+
+enum TestLogsEntryJSON {
+    private static let encoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return encoder
+    }()
+
+    static func prettify(entry: TestNotifyLogEntryFull) throws -> String {
+        let data = try encoder.encode(entry)
+        guard let string = String(data: data, encoding: .utf8) else {
+            throw NSError(domain: "TestLogsEntryJSON", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "failed to decode UTF-8 from encoded entry",
+            ])
+        }
+        return string.replacingOccurrences(of: "\\/", with: "/")
+    }
+}
+
+func notifyLogEntryFromInput(_ input: TestLogEntryInput) -> TestNotifyLogEntryFull? {
+    guard let timestamp = stringToIso(input.timestamp) else {
+        return nil
+    }
+    return TestNotifyLogEntryFull(
+        source: input.source,
+        timestamp: timestamp,
+        dir: input.dir,
+        event: input.event,
+        command: input.command
+    )
+}
+
+enum TestLogsViewModel {
+    static func simulatePollDetection(entryCounts: [Int]) -> (counts: [Int], detectedNew: Bool) {
+        var detectedNew = false
+        var previousCount: Int?
+        for count in entryCounts {
+            if let previousCount, count > previousCount {
+                detectedNew = true
+            }
+            previousCount = count
+        }
+        return (entryCounts, detectedNew)
     }
 }
 
@@ -875,6 +983,58 @@ func runHelper() -> Never {
         let state = TestOpenLogsMenuState.menuState(infoError: request.info_error)
         response.menu_label = state.label
         response.menu_enabled = state.enabled
+
+    case "logs_viewer_menu_state":
+        let state = TestLogsViewerMenuState.menuState()
+        response.menu_label = state.label
+        response.menu_enabled = state.enabled
+
+    case "logs_viewer_format_entry":
+        guard let entry = request.log_entry else {
+            response.error = "missing log_entry for logs_viewer_format_entry"
+            break
+        }
+        response.display_line = TestLogsEntryFormatter.formatDisplayLine(
+            source: entry.source,
+            timestamp: entry.timestamp,
+            dir: entry.dir,
+            event: entry.event
+        )
+
+    case "logs_viewer_format_command_details":
+        guard let entry = request.log_entry else {
+            response.error = "missing log_entry for logs_viewer_format_command_details"
+            break
+        }
+        response.detail_lines = TestLogsEntryFormatter.formatCommandDetails(
+            event: entry.event,
+            command: entry.command
+        )
+
+    case "logs_viewer_prettify_entry":
+        guard let input = request.log_entry else {
+            response.error = "missing log_entry for logs_viewer_prettify_entry"
+            break
+        }
+        guard let entry = notifyLogEntryFromInput(input) else {
+            response.error = "invalid timestamp in log_entry"
+            break
+        }
+        do {
+            response.pretty_json = try TestLogsEntryJSON.prettify(entry: entry)
+        } catch {
+            response.error = "failed to prettify log entry: \(error.localizedDescription)"
+        }
+
+    case "logs_viewer_poll_detects_new":
+        guard let sequence = request.poll_sequence else {
+            response.error = "missing poll_sequence for logs_viewer_poll_detects_new"
+            break
+        }
+        let counts = sequence.map { $0.entries.count }
+        let result = TestLogsViewModel.simulatePollDetection(entryCounts: counts)
+        response.poll_entry_counts = result.counts
+        response.detected_new = result.detectedNew
 
     case "log_command_null_omit":
         guard let dir = request.log_dir else {

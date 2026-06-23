@@ -1,11 +1,14 @@
 package server
 
 import (
+	"bufio"
+	"bytes"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -83,6 +86,10 @@ func (s *store) eventsPath() string {
 }
 
 func (s *store) logsPath() string {
+	return filepath.Join(s.stateDir, "notify-logs.jsonl")
+}
+
+func (s *store) legacyLogsPath() string {
 	return filepath.Join(s.stateDir, "notify-logs.json")
 }
 
@@ -107,7 +114,14 @@ func (s *store) loadEvents() error {
 }
 
 func (s *store) loadLogs() error {
-	data, err := os.ReadFile(s.logsPath())
+	if _, err := os.Stat(s.logsPath()); err == nil {
+		return s.loadJSONL(s.logsPath())
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	legacyPath := s.legacyLogsPath()
+	data, err := os.ReadFile(legacyPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			s.logs = nil
@@ -117,9 +131,56 @@ func (s *store) loadLogs() error {
 	}
 	if len(data) == 0 {
 		s.logs = nil
+		return os.Remove(legacyPath)
+	}
+	var loaded []NotifyLogEntry
+	if err := json.Unmarshal(data, &loaded); err != nil {
+		s.logs = nil
 		return nil
 	}
-	return json.Unmarshal(data, &s.logs)
+	s.logs = loaded
+	if len(s.logs) > maxNotifyLogs {
+		s.logs = s.logs[len(s.logs)-maxNotifyLogs:]
+	}
+	if err := s.saveLogsLocked(); err != nil {
+		return err
+	}
+	return os.Remove(legacyPath)
+}
+
+func (s *store) loadJSONL(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			s.logs = nil
+			return nil
+		}
+		return err
+	}
+	defer f.Close()
+
+	var loaded []NotifyLogEntry
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var entry NotifyLogEntry
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			continue
+		}
+		loaded = append(loaded, entry)
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	s.logs = loaded
+	if len(s.logs) > maxNotifyLogs {
+		s.logs = s.logs[len(s.logs)-maxNotifyLogs:]
+		return s.saveLogsLocked()
+	}
+	return nil
 }
 
 func (s *store) saveEventsLocked() error {
@@ -131,11 +192,16 @@ func (s *store) saveEventsLocked() error {
 }
 
 func (s *store) saveLogsLocked() error {
-	data, err := json.Marshal(s.logs)
-	if err != nil {
-		return err
+	var buf bytes.Buffer
+	for _, entry := range s.logs {
+		line, err := json.Marshal(entry)
+		if err != nil {
+			return err
+		}
+		buf.Write(line)
+		buf.WriteByte('\n')
 	}
-	return os.WriteFile(s.logsPath(), data, 0644)
+	return os.WriteFile(s.logsPath(), buf.Bytes(), 0644)
 }
 
 func (s *store) listEvents() []SessionEvent {
@@ -217,11 +283,24 @@ func (s *store) removeEvents(dir string) int {
 func (s *store) appendLog(entry NotifyLogEntry) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	line, err := json.Marshal(entry)
+	if err != nil {
+		return
+	}
+	f, err := os.OpenFile(s.logsPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	_, _ = f.Write(line)
+	_, _ = f.Write([]byte("\n"))
+	_ = f.Close()
+
 	s.logs = append(s.logs, entry)
 	if len(s.logs) > maxNotifyLogs {
 		s.logs = s.logs[len(s.logs)-maxNotifyLogs:]
+		_ = s.saveLogsLocked()
 	}
-	_ = s.saveLogsLocked()
 }
 
 func (s *store) listLogs() []NotifyLogEntry {

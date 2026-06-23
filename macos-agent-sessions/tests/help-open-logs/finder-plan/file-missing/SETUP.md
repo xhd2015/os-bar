@@ -3,8 +3,8 @@
 **Feature**: log file absent → open state directory in Finder
 
 ```
-# empty storage_path, no notify-logs.json
-storage_path/ (no notify-logs.json)
+# empty storage_path, no notify-logs.jsonl
+storage_path/ (no notify-logs.jsonl)
 
 # plan opens the directory
 -> reveal_kind=directory, reveal_path=storage_path
@@ -13,7 +13,7 @@ storage_path/ (no notify-logs.json)
 ## Steps
 
 1. Create isolated empty `storage_path` under `t.TempDir()`.
-2. Do **not** create `notify-logs.json`.
+2. Do **not** create `notify-logs.jsonl`.
 3. Set `req.StoragePath` and `req.SeedLogFile = false`.
 4. Call `logs_finder_plan` via Swift test helper.
 

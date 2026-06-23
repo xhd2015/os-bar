@@ -3,8 +3,8 @@
 **Feature**: log file present → select file in Finder
 
 ```
-# seed notify-logs.json under storage_path
-storage_path/notify-logs.json exists
+# seed notify-logs.jsonl under storage_path
+storage_path/notify-logs.jsonl exists
 
 # plan selects the log file rooted at storage_path
 -> reveal_kind=file, reveal_path=<log>, select_root=storage_path
@@ -13,7 +13,7 @@ storage_path/notify-logs.json exists
 ## Steps
 
 1. Create isolated `storage_path` under `t.TempDir()`.
-2. Write `notify-logs.json` with minimal JSON content `[]`.
+2. Write `notify-logs.jsonl` with one minimal JSONL line (empty object or sample entry).
 3. Set `req.StoragePath` and `req.SeedLogFile = true`.
 4. Call `logs_finder_plan` via Swift test helper.
 
@@ -32,8 +32,8 @@ func Setup(t *testing.T, req *Request) error {
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
 		return err
 	}
-	logPath := filepath.Join(stateDir, "notify-logs.json")
-	if err := os.WriteFile(logPath, []byte("[]"), 0644); err != nil {
+	logPath := filepath.Join(stateDir, "notify-logs.jsonl")
+	if err := os.WriteFile(logPath, []byte("{}\n"), 0644); err != nil {
 		return err
 	}
 	req.Action = actionLogsFinderPlan

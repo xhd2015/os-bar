@@ -14,7 +14,7 @@ doctest -> logs_finder_plan | open_logs_menu_state -> TestHelper.swift -> reveal
 
 - The `agent-sessions` CLI exists at `filepath.Join(DOCTEST_ROOT, "..", "..", "go-pkgs", "cmd", "agent-sessions")`.
 - `GET /api/info` returns `{"storage_path":"...", "port":..., "event_count":...}`.
-- Log file path is `{storage_path}/notify-logs.json`.
+- Log file path is `{storage_path}/notify-logs.jsonl`.
 - **Isolation (mandatory):** Every test uses `stateDir` under `t.TempDir()`; never reads/writes real `~/.os-bar/`.
 - Tests use ephemeral ports; never bind production port `38271`.
 - Swift test helper is built from `os-bar-agent-sessionsTests/TestHelper.swift` for pure-logic leaves.
@@ -34,7 +34,7 @@ doctest -> logs_finder_plan | open_logs_menu_state -> TestHelper.swift -> reveal
 ## Context
 
 - Path resolution is daemon-only; no `AGENT_SESSIONS_STATE_DIR` / `$HOME` fallback in app code.
-- On daemon error: menu label `Open Logs (daemon unreachable)`, `menu_enabled=false`.
+- On daemon error: Finder menu label `Show Logs in Finder (daemon unreachable)`, `menu_enabled=false`.
 - On success with log file: `reveal_kind=file`, `select_root=storage_path`.
 - On success without log file: `reveal_kind=directory`, open `storage_path`.
 - No keyboard shortcut; no real Finder in CI.

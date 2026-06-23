@@ -2,7 +2,7 @@
 
 - `resp.Error == ""`.
 - `resp.RevealKind == "file"`.
-- `resp.RevealPath` ends with `notify-logs.json` and exists on disk.
+- `resp.RevealPath` ends with `notify-logs.jsonl` and exists on disk.
 - `resp.SelectRoot == req.StoragePath` (normalized absolute paths).
 
 ## Side Effects
@@ -34,7 +34,7 @@ func Assert(t *testing.T, req *Request, resp *Response, err error) {
 	if resp.RevealKind != "file" {
 		t.Fatalf("expected reveal_kind=file, got %q", resp.RevealKind)
 	}
-	wantLog := filepath.Join(req.StoragePath, "notify-logs.json")
+	wantLog := filepath.Join(req.StoragePath, "notify-logs.jsonl")
 	gotPath, _ := filepath.Abs(resp.RevealPath)
 	wantPath, _ := filepath.Abs(wantLog)
 	if gotPath != wantPath {
@@ -48,8 +48,8 @@ func Assert(t *testing.T, req *Request, resp *Response, err error) {
 	if gotRoot != wantRoot {
 		t.Fatalf("select_root mismatch: got %q want %q", gotRoot, wantRoot)
 	}
-	if !strings.HasSuffix(resp.RevealPath, "notify-logs.json") {
-		t.Fatalf("reveal_path should end with notify-logs.json, got %q", resp.RevealPath)
+	if !strings.HasSuffix(resp.RevealPath, "notify-logs.jsonl") {
+		t.Fatalf("reveal_path should end with notify-logs.jsonl, got %q", resp.RevealPath)
 	}
 	t.Logf("finder-plan/file-exists OK: reveal_path=%s select_root=%s", resp.RevealPath, resp.SelectRoot)
 }

@@ -6,29 +6,37 @@ import ServiceManagement
 final class OpenLogsController: ObservableObject {
     static let shared = OpenLogsController()
 
-    @Published private(set) var label = "Open Logs"
-    @Published private(set) var enabled = false
+    @Published private(set) var finderLabel = "Show Logs in Finder"
+    @Published private(set) var finderEnabled = false
+    @Published private(set) var logsLabel = "Logs"
+    @Published private(set) var logsEnabled = true
 
     private init() {}
 
     func refresh() async {
         do {
             _ = try await DaemonClient.shared.info()
-            apply(OpenLogsMenuState.menuState(infoError: nil))
+            applyFinder(OpenLogsMenuState.menuState(infoError: nil))
         } catch {
-            apply(OpenLogsMenuState.menuState(infoError: error.localizedDescription))
+            applyFinder(OpenLogsMenuState.menuState(infoError: error.localizedDescription))
         }
+        applyLogs(OpenLogsMenuState.logsViewerMenuState())
     }
 
-    func performOpen() async {
+    func performOpenFinder() async {
         await refresh()
-        guard enabled else { return }
+        guard finderEnabled else { return }
         await LogsFinderOpener.openLogs()
     }
 
-    private func apply(_ state: OpenLogsMenuStateResult) {
-        label = state.label
-        enabled = state.enabled
+    private func applyFinder(_ state: OpenLogsMenuStateResult) {
+        finderLabel = state.label
+        finderEnabled = state.enabled
+    }
+
+    private func applyLogs(_ state: OpenLogsMenuStateResult) {
+        logsLabel = state.label
+        logsEnabled = state.enabled
     }
 }
 
@@ -277,91 +285,22 @@ struct AgentSessionApp: App {
         }
         .windowResizability(.contentSize)
         .defaultLaunchBehavior(.suppressed)
-        .commands {
-            CommandGroup(after: .help) {
-                Button(openLogs.label) {
-                    Task { await openLogs.performOpen() }
-                }
-                .disabled(!openLogs.enabled)
-            }
+
+        Window("Logs", id: "logs") {
+            LogsViewerView()
         }
+        .windowResizability(.contentSize)
+        .defaultLaunchBehavior(.suppressed)
 
         MenuBarExtra {
-            VStack(alignment: .leading, spacing: 0) {
-                if store.events.isEmpty {
-                    Text("No sessions")
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                } else {
-                    ForEach(store.events) { event in
-                        Button {
-                            openInCode(event.dir)
-                            store.markConsumed(dir: event.dir)
-                        } label: {
-                            let dot = event.consumed ? "  " : "● "
-                            let name = basename(event.dir).padding(toLength: 22, withPad: " ", startingAt: 0)
-                            let time = store.relativeTime(for: event.timestamp)
-                            Text("\(dot)\(name) \(time)")
-                                .font(.system(.body, design: .monospaced))
-                                .lineLimit(1)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-
-                Divider()
-
-                Toggle("Auto Start", isOn: $autoStart)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .onChange(of: autoStart) { enabled in
-                        if #available(macOS 13.0, *) {
-                            do {
-                                if enabled {
-                                    try SMAppService.mainApp.register()
-                                } else {
-                                    try SMAppService.mainApp.unregister()
-                                }
-                            } catch {
-                                print("Auto Start toggle failed: \(error)")
-                                autoStart = !enabled
-                            }
-                        }
-                    }
-
-                Divider()
-
-                Button(openLogs.label) {
-                    Task { await openLogs.performOpen() }
-                }
-                .disabled(!openLogs.enabled)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-
-                SettingsMenuButton(showIntegrationsSettings: showIntegrationsSettings)
-
-                Button("Quit") {
-                    NSApplication.shared.terminate(nil)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-            }
-            .padding(.vertical, 4)
-            .frame(minWidth: 220)
-            .accessibilityIdentifier("menu-bar-extra")
-            .task {
-                while !DaemonReadiness.shared.isReady {
-                    try? await Task.sleep(nanoseconds: 50_000_000)
-                }
-                await openLogs.refresh()
-            }
-            .onAppear {
-                Task { await openLogs.refresh() }
-            }
+            MenuBarDropdownContent(
+                store: store,
+                openLogs: openLogs,
+                autoStart: $autoStart,
+                showIntegrationsSettings: showIntegrationsSettings,
+                showLogsWindow: showLogsWindow,
+                openInCode: openInCode
+            )
         } label: {
             ZStack {
                 HStack(spacing: 2) {
@@ -377,9 +316,32 @@ struct AgentSessionApp: App {
             }
             .accessibilityIdentifier("menu-bar-extra")
         }
+        .commands {
+            HelpMenuCommands(openLogs: openLogs)
+        }
     }
 
     // MARK: - Helpers
+
+    private func showLogsWindow(openWindow: OpenWindowAction) {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        openWindow(id: "logs")
+        if let window = NSApp.windows.first(where: { $0.title == "Logs" }) {
+            window.makeKeyAndOrderFront(nil)
+            return
+        }
+        Task { @MainActor in
+            for _ in 0..<15 {
+                openWindow(id: "logs")
+                if let window = NSApp.windows.first(where: { $0.title == "Logs" }) {
+                    window.makeKeyAndOrderFront(nil)
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+        }
+    }
 
     private func showIntegrationsSettings(openWindow: OpenWindowAction) {
         NSApp.setActivationPolicy(.regular)
@@ -408,6 +370,129 @@ struct AgentSessionApp: App {
 
     private func openInCode(_ dir: String) {
         appDelegate.openDir(dir)
+    }
+}
+
+@available(macOS 15.0, *)
+private struct MenuBarDropdownContent: View {
+    @ObservedObject var store: SessionStore
+    @ObservedObject var openLogs: OpenLogsController
+    @Binding var autoStart: Bool
+    @Environment(\.openWindow) private var openWindow
+    let showIntegrationsSettings: (OpenWindowAction) -> Void
+    let showLogsWindow: (OpenWindowAction) -> Void
+    let openInCode: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if store.events.isEmpty {
+                Text("No sessions")
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+            } else {
+                ForEach(store.events) { event in
+                    Button {
+                        openInCode(event.dir)
+                        store.markConsumed(dir: event.dir)
+                    } label: {
+                        let dot = event.consumed ? "  " : "● "
+                        let name = basename(event.dir).padding(toLength: 22, withPad: " ", startingAt: 0)
+                        let time = store.relativeTime(for: event.timestamp)
+                        Text("\(dot)\(name) \(time)")
+                            .font(.system(.body, design: .monospaced))
+                            .lineLimit(1)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            Divider()
+
+            Toggle("Auto Start", isOn: $autoStart)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .onChange(of: autoStart) { enabled in
+                    if #available(macOS 13.0, *) {
+                        do {
+                            if enabled {
+                                try SMAppService.mainApp.register()
+                            } else {
+                                try SMAppService.mainApp.unregister()
+                            }
+                        } catch {
+                            print("Auto Start toggle failed: \(error)")
+                            autoStart = !enabled
+                        }
+                    }
+                }
+
+            Divider()
+
+            Button(openLogs.finderLabel) {
+                Task { await openLogs.performOpenFinder() }
+            }
+            .disabled(!openLogs.finderEnabled)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+
+            Button(openLogs.logsLabel) {
+                showLogsWindow(openWindow)
+            }
+            .disabled(!openLogs.logsEnabled)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+
+            SettingsMenuButton(showIntegrationsSettings: showIntegrationsSettings)
+
+            Button("Quit") {
+                NSApplication.shared.terminate(nil)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+        }
+        .padding(.vertical, 4)
+        .frame(minWidth: 220)
+        .accessibilityIdentifier("menu-bar-extra")
+        .task {
+            while !DaemonReadiness.shared.isReady {
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+            await openLogs.refresh()
+        }
+        .onAppear {
+            Task { await openLogs.refresh() }
+        }
+    }
+
+    private func basename(_ path: String) -> String {
+        let url = URL(fileURLWithPath: path)
+        return url.lastPathComponent
+    }
+}
+
+@available(macOS 15.0, *)
+private struct HelpMenuCommands: Commands {
+    @ObservedObject var openLogs: OpenLogsController
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(after: .help) {
+            Button(openLogs.finderLabel) {
+                Task { await openLogs.performOpenFinder() }
+            }
+            .disabled(!openLogs.finderEnabled)
+
+            Button(openLogs.logsLabel) {
+                NSApp.setActivationPolicy(.regular)
+                NSApp.activate(ignoringOtherApps: true)
+                openWindow(id: "logs")
+            }
+            .disabled(!openLogs.logsEnabled)
+        }
     }
 }
 

@@ -6,8 +6,8 @@
 # given storage_path from daemon info
 storage_path + filesystem state -> LogsFinderPlan
 
-# file exists → select notify-logs.json in Finder
-seed notify-logs.json -> reveal_kind=file, reveal_path=<log>, select_root=storage_path
+# file exists → select notify-logs.jsonl in Finder
+seed notify-logs.jsonl -> reveal_kind=file, reveal_path=<log>, select_root=storage_path
 
 # file missing → open storage_path directory
 empty dir -> reveal_kind=directory, reveal_path=storage_path
@@ -17,7 +17,7 @@ empty dir -> reveal_kind=directory, reveal_path=storage_path
 
 - Tests exercise `logs_finder_plan` via Swift `TestHelper` (no real `NSWorkspace` calls).
 - `storage_path` is an isolated temp directory created in leaf `Setup`.
-- Log file name is always `notify-logs.json` under `storage_path`.
+- Log file name is always `notify-logs.jsonl` under `storage_path`.
 
 ## Steps
 

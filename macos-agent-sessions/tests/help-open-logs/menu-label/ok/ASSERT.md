@@ -1,7 +1,7 @@
 ## Expected
 
 - `resp.Error == ""`.
-- `resp.MenuLabel == "Open Logs"`.
+- `resp.MenuLabel == "Show Logs in Finder"`.
 - `resp.MenuEnabled == true`.
 
 ## Side Effects
@@ -24,8 +24,9 @@ func Assert(t *testing.T, req *Request, resp *Response, err error) {
 	if resp.Error != "" {
 		t.Fatalf("test helper reported error: %s", resp.Error)
 	}
-	if resp.MenuLabel != "Open Logs" {
-		t.Fatalf("expected menu_label=%q, got %q", "Open Logs", resp.MenuLabel)
+	want := "Show Logs in Finder"
+	if resp.MenuLabel != want {
+		t.Fatalf("expected menu_label=%q, got %q", want, resp.MenuLabel)
 	}
 	if !resp.MenuEnabled {
 		t.Fatal("expected menu_enabled=true on successful info")

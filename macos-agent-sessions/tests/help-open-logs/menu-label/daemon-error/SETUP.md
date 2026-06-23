@@ -4,7 +4,7 @@
 
 ```
 # DaemonClient.info() fails (connection refused, non-200, decode error)
-info_error="daemon unreachable" -> menu_label="Open Logs (daemon unreachable)", menu_enabled=false
+info_error="daemon unreachable" -> menu_label="Show Logs in Finder (daemon unreachable)", menu_enabled=false
 ```
 
 ## Steps

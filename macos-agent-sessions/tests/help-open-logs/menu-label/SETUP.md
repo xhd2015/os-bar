@@ -4,10 +4,10 @@
 
 ```
 # daemon reachable, storage_path returned
-info_error="" -> menu_label="Open Logs", menu_enabled=true
+info_error="" -> menu_label="Show Logs in Finder", menu_enabled=true
 
 # daemon unreachable / API error
-info_error set -> menu_label="Open Logs (daemon unreachable)", menu_enabled=false
+info_error set -> menu_label="Show Logs in Finder (daemon unreachable)", menu_enabled=false
 ```
 
 ## Preconditions

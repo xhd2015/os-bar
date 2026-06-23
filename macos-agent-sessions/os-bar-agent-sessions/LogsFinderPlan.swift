@@ -7,7 +7,7 @@ struct LogsFinderPlanResult: Equatable {
 }
 
 enum LogsFinderPlan {
-    static let logFileName = "notify-logs.json"
+    static let logFileName = "notify-logs.jsonl"
 
     static func plan(storagePath: String) -> LogsFinderPlanResult {
         let logPath = (storagePath as NSString).appendingPathComponent(logFileName)

@@ -1,9 +1,9 @@
 # Help Open Logs — Doc-Style Test Tree
 
-Test suite for the **Open Logs** menu item (Help menu + menu-bar dropdown above
-Settings). Validates daemon-only path resolution via `GET /api/info`, pure Finder
-reveal planning (`notify-logs.json` vs state directory), and dynamic menu label /
-enabled state when the daemon is reachable or unreachable.
+Test suite for the **Show Logs in Finder** menu item (Help menu + menu-bar dropdown
+above Settings). Validates daemon-only path resolution via `GET /api/info`, pure
+Finder reveal planning (`notify-logs.jsonl` vs state directory), and dynamic menu
+label / enabled state when the daemon is reachable or unreachable.
 
 No real Finder or UI automation in CI — assert HTTP info, plan, and label only.
 
@@ -13,16 +13,16 @@ No real Finder or UI automation in CI — assert HTTP info, plan, and label only
 
 # DSN (Domain Specific Notion)
 
-The **menu bar app** exposes **Open Logs** in two placements: the system **Help**
-menu and the **menu-bar dropdown** above **Settings…**. Path resolution is
+The **menu bar app** exposes **Show Logs in Finder** in two placements: the system
+**Help** menu and the **menu-bar dropdown** above **Settings…**. Path resolution is
 **daemon-only**: `storage_path ← GET /api/info` with **no** local/env fallback.
 
-The **log file** lives at `{storage_path}/notify-logs.json` (Go `store.logsPath()`).
+The **log file** lives at `{storage_path}/notify-logs.jsonl` (Go `store.logsPath()`).
 On click (daemon reachable): if the log file exists, Finder **selects** it via
 `NSWorkspace.selectFile`; otherwise Finder **opens** `storage_path` as a directory.
 
-On daemon error, **both** menu items show `Open Logs (daemon unreachable)` and are
-**disabled**. Label refreshes on launch and when menus open.
+On daemon error, **both** Finder menu items show `Show Logs in Finder (daemon unreachable)`
+and are **disabled**. Label refreshes on launch and when menus open.
 
 The **Go doctest harness** starts an isolated `agent-sessions serve` process for
 `info/` leaves (temp `--state-dir`, ephemeral port). The **Swift test helper**
@@ -50,7 +50,7 @@ help-open-logs/                          ROOT: Request{Action, Port, StateDir, S
 ├── finder-plan/                         DECISION: concern = pure Finder reveal plan
 │   └── [SETUP] req.Action = logs_finder_plan
 │   │
-│   ├── file-exists/                     LEAF: notify-logs.json present
+│   ├── file-exists/                     LEAF: notify-logs.jsonl present
 │   │   ├── SETUP → seed log file under storage_path
 │   │   └── ASSERT → reveal_kind=file, reveal_path=log, select_root=storage_path
 │   │
@@ -63,11 +63,11 @@ help-open-logs/                          ROOT: Request{Action, Port, StateDir, S
     │
     ├── ok/                              LEAF: successful daemon info
     │   ├── SETUP → info_error empty
-    │   └── ASSERT → label="Open Logs", enabled=true
+    │   └── ASSERT → label="Show Logs in Finder", enabled=true
     │
     └── daemon-error/                    LEAF: daemon unreachable
         ├── SETUP → info_error set
-        └── ASSERT → label="Open Logs (daemon unreachable)", enabled=false
+        └── ASSERT → label="Show Logs in Finder (daemon unreachable)", enabled=false
 ```
 
 ## Parameter Ranking
@@ -86,10 +86,10 @@ help-open-logs/                          ROOT: Request{Action, Port, StateDir, S
 |---|------|-------------|
 | 1 | `info/success/` | `GET /api/info` returns 200; `storage_path` matches isolated `--state-dir` |
 | 2 | `info/unreachable/` | No daemon on ephemeral port → connection error; `storage_path` empty |
-| 3 | `finder-plan/file-exists/` | Seeded `notify-logs.json` → `reveal_kind=file`, select file in storage root |
+| 3 | `finder-plan/file-exists/` | Seeded `notify-logs.jsonl` → `reveal_kind=file`, select file in storage root |
 | 4 | `finder-plan/file-missing/` | Empty state dir → `reveal_kind=directory`, open `storage_path` |
-| 5 | `menu-label/ok/` | Successful info → label `Open Logs`, enabled |
-| 6 | `menu-label/daemon-error/` | Info error → label `Open Logs (daemon unreachable)`, disabled |
+| 5 | `menu-label/ok/` | Successful info → label `Show Logs in Finder`, enabled |
+| 6 | `menu-label/daemon-error/` | Info error → label `Show Logs in Finder (daemon unreachable)`, disabled |
 
 ## Coverage Map
 
@@ -149,7 +149,7 @@ const (
 	daemonReadyTimeout = 10 * time.Second
 	daemonReadyPoll    = 50 * time.Millisecond
 
-	logFileName = "notify-logs.json"
+	logFileName = "notify-logs.jsonl"
 )
 
 // Request drives daemon HTTP and Swift test-helper actions. Defined only at root.

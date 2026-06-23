@@ -9,10 +9,14 @@ enum OpenLogsMenuState {
     static func menuState(infoError: String?) -> OpenLogsMenuStateResult {
         if let infoError, !infoError.isEmpty {
             return OpenLogsMenuStateResult(
-                label: "Open Logs (daemon unreachable)",
+                label: "Show Logs in Finder (daemon unreachable)",
                 enabled: false
             )
         }
-        return OpenLogsMenuStateResult(label: "Open Logs", enabled: true)
+        return OpenLogsMenuStateResult(label: "Show Logs in Finder", enabled: true)
+    }
+
+    static func logsViewerMenuState() -> OpenLogsMenuStateResult {
+        OpenLogsMenuStateResult(label: "Logs", enabled: true)
     }
 }

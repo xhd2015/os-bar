@@ -4,7 +4,7 @@
 
 ```
 # notify without source=notify appends log only
-harness -> POST /api/notify {"dir":"/proj","event":"x"} -> daemon -> notify-logs.json
+harness -> POST /api/notify {"dir":"/proj","event":"x"} -> daemon -> notify-logs.jsonl
 
 # session store stays empty
 harness <- GET /api/list -> []

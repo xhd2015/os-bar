@@ -8,7 +8,7 @@
 ## Side Effects
 
 - `events.json` remains empty.
-- `notify-logs.json` gains one entry.
+- `notify-logs.jsonl` gains one entry (JSONL line on disk).
 
 ## Errors
 

@@ -4,7 +4,7 @@
 
 ```
 # DaemonClient.info() succeeds
-info_error="" -> menu_label="Open Logs", menu_enabled=true
+info_error="" -> menu_label="Show Logs in Finder", menu_enabled=true
 ```
 
 ## Steps

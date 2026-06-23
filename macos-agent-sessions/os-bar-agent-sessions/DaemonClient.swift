@@ -79,6 +79,14 @@ final class DaemonClient {
         return try decoder.decode([SessionEvent].self, from: data)
     }
 
+    func listLogs() async throws -> [NotifyLogEntry] {
+        let (data, response) = try await get(path: "/api/logs")
+        try ensureOK(response, data: data)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom(decodeFlexibleDate)
+        return try decoder.decode([NotifyLogEntry].self, from: data)
+    }
+
     func consume(dir: String) async throws {
         let body = try JSONEncoder().encode(["dir": dir])
         let (_, response) = try await post(path: "/api/events/consume", body: body)
