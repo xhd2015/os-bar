@@ -22,7 +22,7 @@
 
 ## Context
 - Detection layer action: `integrations_json` — machine-readable install status for grok, opencode, pi, codex.
-- Window layer actions: `open_settings`, `dump_layout`, `click`, `sequence`, `teardown`.
+- Window layer actions: `open_settings`, `dump_layout`, `click`, `sequence`, `teardown`, `launch_app`, `click_settings_menu`, `check_window`, `check_window_front`, `obscure_window`.
 - `sequence` runs sub-requests in order; first `dump_layout` → `LayoutBefore`, last `dump_layout` → `LayoutAfter`.
 - Status JSON enum: `missing` | `installed` | `up_to_date` | `outdated`.
 - UI badge title values (v1): `Missing`, `Installed`, `Up to date`, `Outdated`.

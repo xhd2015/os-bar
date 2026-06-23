@@ -222,6 +222,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+@available(macOS 15.0, *)
 @main
 struct AgentSessionApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
@@ -244,6 +245,7 @@ struct AgentSessionApp: App {
             IntegrationsSettingsView()
         }
         .windowResizability(.contentSize)
+        .defaultLaunchBehavior(.suppressed)
 
         MenuBarExtra {
             VStack(alignment: .leading, spacing: 0) {
@@ -294,7 +296,7 @@ struct AgentSessionApp: App {
 
                 Divider()
 
-                SettingsMenuButton()
+                SettingsMenuButton(showIntegrationsSettings: showIntegrationsSettings)
 
                 Button("Quit") {
                     NSApplication.shared.terminate(nil)
@@ -304,6 +306,7 @@ struct AgentSessionApp: App {
             }
             .padding(.vertical, 4)
             .frame(minWidth: 220)
+            .accessibilityIdentifier("menu-bar-extra")
         } label: {
             ZStack {
                 HStack(spacing: 2) {
@@ -317,10 +320,31 @@ struct AgentSessionApp: App {
                 .fixedSize()
                 IntegrationsLauncher()
             }
+            .accessibilityIdentifier("menu-bar-extra")
         }
     }
 
     // MARK: - Helpers
+
+    private func showIntegrationsSettings(openWindow: OpenWindowAction) {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        openWindow(id: "integrations")
+        if let window = NSApp.windows.first(where: { $0.title == "Integrations" }) {
+            window.makeKeyAndOrderFront(nil)
+            return
+        }
+        Task { @MainActor in
+            for _ in 0..<15 {
+                openWindow(id: "integrations")
+                if let window = NSApp.windows.first(where: { $0.title == "Integrations" }) {
+                    window.makeKeyAndOrderFront(nil)
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+        }
+    }
 
     private func basename(_ path: String) -> String {
         let url = URL(fileURLWithPath: path)
@@ -359,12 +383,14 @@ private struct IntegrationsLauncher: View {
 
 private struct SettingsMenuButton: View {
     @Environment(\.openWindow) private var openWindow
+    let showIntegrationsSettings: (OpenWindowAction) -> Void
 
     var body: some View {
         Button("Settings…") {
-            openWindow(id: "integrations")
+            showIntegrationsSettings(openWindow)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
+        .accessibilityIdentifier("settings-menu-button")
     }
 }

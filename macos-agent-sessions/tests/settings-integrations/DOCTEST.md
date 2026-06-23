@@ -60,14 +60,29 @@ settings-integrations/                    ROOT: Request{Action, HomeDir, ...}, R
     │       ├── SETUP → sequence: open_settings → dump_layout
     │       └── ASSERT → each *-status Missing, each *-install AXButton
     │
-    └── click-install/                    DECISION: install via UI click
-        ├── grok-missing-to-installed/    LEAF: grok Install button
-        │   ├── SETUP → sequence: open → dump → click grok-install → dump → teardown
-        │   └── ASSERT → Missing→Up to date, hook files under fakeHome/.grok/
+    ├── click-install/                    DECISION: install via UI click
+    │   ├── grok-missing-to-installed/    LEAF: grok Install button
+    │   │   ├── SETUP → sequence: open → dump → click grok-install → dump → teardown
+    │   │   └── ASSERT → Missing→Up to date, hook files under fakeHome/.grok/
+    │   │
+    │   └── opencode-missing-to-installed/ LEAF: opencode Install button
+    │       ├── SETUP → sequence: open → dump → click opencode-install → dump → teardown
+    │       └── ASSERT → Missing→Up to date, plugin under fakeHome/.config/opencode/
+    │
+    └── settings-menu/                    DECISION: menu-bar Settings (normal launch)
+        └── [SETUP] launch_app (no -uiTestingOpenSettings)
         │
-        └── opencode-missing-to-installed/ LEAF: opencode Install button
-            ├── SETUP → sequence: open → dump → click opencode-install → dump → teardown
-            └── ASSERT → Missing→Up to date, plugin under fakeHome/.config/opencode/
+        ├── bootstrap-no-auto-open/       LEAF: app starts without Integrations window
+        │   ├── SETUP → sequence: launch_app → check_window → teardown
+        │   └── ASSERT → window_visible=false, window_open=false
+        │
+        ├── click-opens-window/           LEAF: Settings click opens window when closed
+        │   ├── SETUP → sequence: launch_app → click_settings_menu → dump_layout → teardown
+        │   └── ASSERT → window_open=true, integrations-window + 4 row ids
+        │
+        └── click-brings-to-front/        LEAF: Settings click raises already-open window
+            ├── SETUP → sequence: launch → click → dump → obscure → click → check_window_front → teardown
+            └── ASSERT → window_open=true, window_main=true, app_frontmost=true
 ```
 
 ## Parameter Ranking
@@ -76,7 +91,7 @@ settings-integrations/                    ROOT: Request{Action, HomeDir, ...}, R
 |------|-----------|----------|
 | 1 | Layer | `detection` (CLI) vs `window` (AX UI) |
 | 2 | Seed profile / HOME state | empty, grok-installed, pi-outdated, codex-merged |
-| 3 | Window action | open, layout dump, click-install target |
+| 3 | Window action | open, layout dump, click-install, settings-menu |
 | 4 | Scope | global only (v1) |
 
 ## Test Index
@@ -91,6 +106,9 @@ settings-integrations/                    ROOT: Request{Action, HomeDir, ...}, R
 | 6 | `window/layout/all-missing-badges/` | All status badges `Missing`, all install buttons present |
 | 7 | `window/click-install/grok-missing-to-installed/` | Click grok Install → Up to date + files written |
 | 8 | `window/click-install/opencode-missing-to-installed/` | Click opencode Install → Up to date + plugin written |
+| 9 | `window/settings-menu/bootstrap-no-auto-open/` | Normal launch → Integrations window not visible |
+| 10 | `window/settings-menu/click-opens-window/` | Settings… click opens window with 4 row identifiers |
+| 11 | `window/settings-menu/click-brings-to-front/` | Settings… click raises obscured window to front |
 
 ## Coverage Map
 
@@ -104,6 +122,9 @@ settings-integrations/                    ROOT: Request{Action, HomeDir, ...}, R
 | Missing badges + install buttons | `window/layout/all-missing-badges` | window |
 | Grok install click transition | `window/click-install/grok-missing-to-installed` | window |
 | OpenCode install click transition | `window/click-install/opencode-missing-to-installed` | window |
+| No bootstrap auto-open | `window/settings-menu/bootstrap-no-auto-open` | window |
+| Settings menu opens window | `window/settings-menu/click-opens-window` | window |
+| Settings menu brings window front | `window/settings-menu/click-brings-to-front` | window |
 
 ## Isolation
 
@@ -125,6 +146,9 @@ doctest test ./tests/settings-integrations/detection/...
 
 # Run window only (requires Accessibility for test runner)
 doctest test ./tests/settings-integrations/window/...
+
+# Run settings-menu leaves only (RED until implementation)
+doctest test ./tests/settings-integrations/window/settings-menu/...
 
 # Verbose
 doctest test -v ./tests/settings-integrations/...
@@ -195,8 +219,11 @@ type Response struct {
 	Layout       *AXNode       `json:"layout,omitempty"`
 	LayoutBefore *AXNode       `json:"layout_before,omitempty"`
 	LayoutAfter  *AXNode       `json:"layout_after,omitempty"`
-	WindowOpen   bool          `json:"window_open"`
-	ClickX       float64       `json:"click_x,omitempty"`
+	WindowOpen    bool  `json:"window_open"`
+	WindowVisible bool  `json:"window_visible"`
+	WindowMain    bool  `json:"window_main"`
+	AppFrontmost  bool  `json:"app_frontmost"`
+	ClickX        float64 `json:"click_x,omitempty"`
 	ClickY       float64       `json:"click_y,omitempty"`
 	ClickOK      bool          `json:"click_ok"`
 	HomeDir      string        `json:"home_dir"`
@@ -538,7 +565,8 @@ func Run(t *testing.T, req *Request) (*Response, error) {
 	switch req.Action {
 	case actionIntegrationsJSON:
 		return runIntegrationsJSON(t, req, cliBinary, fakeHome, workDir)
-	case "open_settings", "dump_layout", "click", "sequence", "teardown":
+	case "open_settings", "dump_layout", "click", "sequence", "teardown",
+		"launch_app", "click_settings_menu", "check_window", "check_window_front", "obscure_window":
 		return runUIAutomation(t, req, projectRoot, fakeHome, workDir)
 	default:
 		return nil, fmt.Errorf("unknown action %q", req.Action)

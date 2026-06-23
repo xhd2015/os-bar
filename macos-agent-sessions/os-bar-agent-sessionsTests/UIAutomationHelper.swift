@@ -46,6 +46,9 @@ struct Response: Codable {
     var layout_before: AXNode?
     var layout_after: AXNode?
     var window_open: Bool = false
+    var window_visible: Bool = false
+    var window_main: Bool = false
+    var app_frontmost: Bool = false
     var click_x: Double?
     var click_y: Double?
     var click_ok: Bool = false
@@ -83,6 +86,32 @@ final class UIAutomationSession {
     }
 
     func openSettings(homeDir: String) throws {
+        try launchApp(homeDir: homeDir, uiTestingOpenSettings: true)
+        let deadline = Date().addingTimeInterval(15)
+        while Date() < deadline {
+            if try integrationsReady() {
+                usleep(100_000)
+                return
+            }
+            usleep(50_000)
+        }
+        throw AutomationError.timeout("Integrations window did not become ready within 15s")
+    }
+
+    func launchApp(homeDir: String) throws {
+        try launchApp(homeDir: homeDir, uiTestingOpenSettings: false)
+        let deadline = Date().addingTimeInterval(15)
+        while Date() < deadline {
+            if appProcess?.isRunning == true, try daemonHealthy() {
+                usleep(500_000)
+                return
+            }
+            usleep(50_000)
+        }
+        throw AutomationError.timeout("app did not become ready within 15s")
+    }
+
+    private func launchApp(homeDir: String, uiTestingOpenSettings: Bool) throws {
         if appProcess != nil {
             return
         }
@@ -96,7 +125,9 @@ final class UIAutomationSession {
         let appPath = try Self.buildApp(projectRoot: projectRoot)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: appPath)
-        process.arguments = ["-uiTestingOpenSettings"]
+        if uiTestingOpenSettings {
+            process.arguments = ["-uiTestingOpenSettings"]
+        }
 
         var env = ProcessInfo.processInfo.environment
         env["HOME"] = homeDir
@@ -113,16 +144,84 @@ final class UIAutomationSession {
         appProcess = process
         appPID = process.processIdentifier
         integrationsWindow = nil
+    }
 
-        let deadline = Date().addingTimeInterval(15)
-        while Date() < deadline {
-            if try integrationsReady() {
-                usleep(100_000)
+    func clickSettingsMenu() throws {
+        guard appPID > 0 else {
+            throw AutomationError.setup("app not launched")
+        }
+
+        if try clickSettingsViaIdentifiers() {
+            return
+        }
+
+        let candidates = try menuBarExtraCandidates()
+        guard !candidates.isEmpty else {
+            throw AutomationError.setup("menu bar extra not found for app pid \(appPID)")
+        }
+
+        let tryLimit = min(candidates.count, 12)
+        for extra in candidates.prefix(tryLimit) {
+            _ = AXUIElementPerformAction(extra, kAXShowMenuAction as CFString)
+            usleep(150_000)
+            _ = AXUIElementPerformAction(extra, kAXPressAction as CFString)
+            usleep(350_000)
+
+            if try menuContainsAppSignature() {
+                guard let settingsItem = try findSettingsMenuItem() else {
+                    throw AutomationError.setup("Settings… menu item not found after opening menu")
+                }
+                guard AXUIElementPerformAction(settingsItem, kAXPressAction as CFString) == .success else {
+                    throw AutomationError.setup("failed to press Settings… menu item")
+                }
+                try waitForIntegrationsWindow(timeout: 8)
                 return
             }
-            usleep(50_000)
+
+            // Close menu before trying the next candidate.
+            _ = AXUIElementPerformAction(extra, kAXPressAction as CFString)
+            usleep(100_000)
         }
-        throw AutomationError.timeout("Integrations window did not become ready within 15s")
+
+        throw AutomationError.setup("Settings… menu item not found for app pid \(appPID)")
+    }
+
+    func checkWindow() throws -> (visible: Bool, open: Bool) {
+        guard appPID > 0 else {
+            return (false, false)
+        }
+        guard let window = try findIntegrationsWindow() else {
+            return (false, false)
+        }
+        let minimized = (try axBool(window, kAXMinimizedAttribute as CFString)) ?? false
+        let hidden = (try axBool(window, kAXHiddenAttribute as CFString)) ?? false
+        let open = true
+        let visible = !minimized && !hidden
+        return (visible, open)
+    }
+
+    func checkWindowFront() throws -> (main: Bool, frontmost: Bool) {
+        guard appPID > 0 else {
+            return (false, false)
+        }
+        let appElement = AXUIElementCreateApplication(appPID)
+        let appFrontmost = (try axBool(appElement, kAXFrontmostAttribute as CFString)) ?? false
+        let runningFrontmost = NSRunningApplication(processIdentifier: appPID)?.isActive ?? false
+
+        guard let window = try findIntegrationsWindow() else {
+            return (false, appFrontmost || runningFrontmost)
+        }
+        let windowMain = (try axBool(window, kAXMainAttribute as CFString)) ?? false
+        let windowFocused = (try axBool(window, kAXFocusedAttribute as CFString)) ?? false
+        return (windowMain || windowFocused, appFrontmost || runningFrontmost)
+    }
+
+    func obscureWindow() throws {
+        guard let window = try findIntegrationsWindow() else {
+            throw AutomationError.windowNotFound
+        }
+        _ = AXUIElementPerformAction(window, "AXLower" as CFString)
+        usleep(200_000)
     }
 
     private func ensureDaemonRunning(homeDir: String) throws {
@@ -176,6 +275,19 @@ final class UIAutomationSession {
         }.resume()
         _ = semaphore.wait(timeout: .now() + 1)
         return healthy
+    }
+
+    private func waitForIntegrationsWindow(timeout: TimeInterval) throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            integrationsWindow = nil
+            if try findIntegrationsWindow() != nil {
+                usleep(200_000)
+                return
+            }
+            usleep(100_000)
+        }
+        throw AutomationError.windowNotFound
     }
 
     private func integrationsReady() throws -> Bool {
@@ -454,6 +566,241 @@ final class UIAutomationSession {
         if err == .apiDisabled { throw AutomationError.apiDisabled }
         guard err == .success else { return nil }
         if let str = value as? String, !str.isEmpty { return str }
+        return nil
+    }
+
+    private func axBool(_ element: AXUIElement, _ attribute: CFString) throws -> Bool? {
+        var value: CFTypeRef?
+        let err = AXUIElementCopyAttributeValue(element, attribute, &value)
+        if err == .apiDisabled { throw AutomationError.apiDisabled }
+        guard err == .success else { return nil }
+        if let b = value as? Bool { return b }
+        if let n = value as? NSNumber { return n.boolValue }
+        return nil
+    }
+
+    private func axPID(_ element: AXUIElement) -> pid_t {
+        var pid: pid_t = 0
+        guard AXUIElementGetPid(element, &pid) == .success else { return 0 }
+        return pid
+    }
+
+    private func pressElement(_ element: AXUIElement) throws -> Bool {
+        NSRunningApplication(processIdentifier: appPID)?.activate(options: [.activateIgnoringOtherApps])
+        var clicked = false
+        if AXUIElementPerformAction(element, kAXPressAction as CFString) == .success {
+            clicked = true
+        }
+        if let frame = try axFrame(element) {
+            let point = CGPoint(x: frame.x + frame.w / 2, y: frame.y + frame.h / 2)
+            clickAtScreenPoint(point)
+            clicked = true
+        }
+        return clicked
+    }
+
+    private func clickSettingsViaIdentifiers() throws -> Bool {
+        let app = AXUIElementCreateApplication(appPID)
+        var extra = try findElement(in: app, identifier: "menu-bar-extra", role: nil, title: nil)
+        if extra == nil {
+            extra = try menuBarExtraCandidates().first
+        }
+        guard let extra else {
+            return false
+        }
+
+        _ = AXUIElementPerformAction(extra, kAXPressAction as CFString)
+        usleep(500_000)
+
+        guard let settings = try findSettingsMenuItem() else {
+            _ = AXUIElementPerformAction(extra, kAXPressAction as CFString)
+            return false
+        }
+
+        guard AXUIElementPerformAction(settings, kAXPressAction as CFString) == .success else {
+            return false
+        }
+        try waitForIntegrationsWindow(timeout: 8)
+        return true
+    }
+
+    private func menuBarExtraCandidates() throws -> [AXUIElement] {
+        let deadline = Date().addingTimeInterval(8)
+        while Date() < deadline {
+            let candidates = try collectMenuBarExtraCandidates()
+            if !candidates.isEmpty {
+                return candidates
+            }
+            usleep(250_000)
+        }
+        return try collectMenuBarExtraCandidates()
+    }
+
+    private func collectMenuBarExtraCandidates() throws -> [AXUIElement] {
+        let system = AXUIElementCreateSystemWide()
+        let app = AXUIElementCreateApplication(appPID)
+        var candidates: [AXUIElement] = []
+        var seen = Set<ObjectIdentifier>()
+
+        func appendCandidate(_ element: AXUIElement) {
+            let key = ObjectIdentifier(element)
+            guard !seen.contains(key) else { return }
+            seen.insert(key)
+            candidates.append(element)
+        }
+
+        func consider(_ element: AXUIElement) throws {
+            let role = try axRole(element)
+            let pid = axPID(element)
+            let title = try axString(element, kAXTitleAttribute as CFString) ?? ""
+            let description = try axString(element, kAXDescriptionAttribute as CFString) ?? ""
+            let identifier = try axString(element, kAXIdentifierAttribute as CFString) ?? ""
+            let pressableRoles: Set<String> = [
+                "AXMenuBarItem", "AXMenuButton", "AXButton", "AXStatusItem", "AXMenuExtra",
+            ]
+            let bellish = title.localizedCaseInsensitiveContains("bell")
+                || description.localizedCaseInsensitiveContains("bell")
+            if identifier == "menu-bar-extra" {
+                appendCandidate(element)
+                return
+            }
+            if pressableRoles.contains(role), pid == appPID || pid == 0 || bellish {
+                appendCandidate(element)
+            }
+        }
+
+        if let menubar = try findElement(in: system, identifier: nil, role: "AXMenuBar", title: nil) {
+            var stack = [menubar]
+            var visited = 0
+            while !stack.isEmpty, visited < 256 {
+                let element = stack.removeLast()
+                visited += 1
+                try consider(element)
+                if let children = try axChildren(element) {
+                    stack.append(contentsOf: children.reversed())
+                }
+            }
+        }
+
+        var stack = [app]
+        var visited = 0
+        while !stack.isEmpty, visited < 256 {
+            let element = stack.removeLast()
+            visited += 1
+            try consider(element)
+            if let children = try axChildren(element) {
+                stack.append(contentsOf: children.reversed())
+            }
+        }
+
+        return candidates
+    }
+
+    private func menuContainsAppSignature() throws -> Bool {
+        let root = AXUIElementCreateSystemWide()
+        let markers = ["Settings…", "Settings...", "Settings", "Quit", "Auto Start", "No sessions"]
+        var hits = 0
+        for marker in markers {
+            if try findMenuItem(containing: marker, in: root) != nil {
+                hits += 1
+            }
+        }
+        return hits >= 2
+    }
+
+    private func findOpenMenu(near element: AXUIElement) throws -> AXUIElement? {
+        var stack = [element]
+        var visited = 0
+        while !stack.isEmpty, visited < 128 {
+            let current = stack.removeLast()
+            visited += 1
+            let role = try axRole(current)
+            if role == "AXMenu" {
+                return current
+            }
+            if let children = try axChildren(current) {
+                stack.append(contentsOf: children.reversed())
+            }
+        }
+
+        let system = AXUIElementCreateSystemWide()
+        if let children = try axChildren(system) {
+            for child in children {
+                if try axRole(child) == "AXMenu" {
+                    return child
+                }
+            }
+        }
+        return nil
+    }
+
+    private func findSettingsMenuItem() throws -> AXUIElement? {
+        let app = AXUIElementCreateApplication(appPID)
+        if let extra = try findElement(in: app, identifier: "menu-bar-extra", role: nil, title: nil) {
+            for exactTitle in ["Settings…", "Settings..."] {
+                if let item = try findMenuItem(exactTitle: exactTitle, in: extra) {
+                    return item
+                }
+            }
+        }
+        if let item = try findElement(in: app, identifier: "settings-menu-button", role: nil, title: nil) {
+            return item
+        }
+        for exactTitle in ["Settings…", "Settings..."] {
+            if let item = try findMenuItem(exactTitle: exactTitle, in: app) {
+                return item
+            }
+        }
+        return nil
+    }
+
+    private func findMenuItem(exactTitle: String, in root: AXUIElement) throws -> AXUIElement? {
+        var stack = [root]
+        var visited = 0
+        while !stack.isEmpty, visited < 256 {
+            let element = stack.removeLast()
+            visited += 1
+            let role = try axRole(element)
+            let title = try axString(element, kAXTitleAttribute as CFString) ?? ""
+            if role == "AXMenuItem", title == exactTitle {
+                return element
+            }
+            if let children = try axChildren(element) {
+                stack.append(contentsOf: children.reversed())
+            }
+        }
+        return nil
+    }
+
+    private func findMenuItem(containing needle: String, in root: AXUIElement, ownedByApp: Bool = false) throws -> AXUIElement? {
+        var stack = [root]
+        var visited = 0
+        while !stack.isEmpty, visited < 768 {
+            let element = stack.removeLast()
+            visited += 1
+            if ownedByApp {
+                let pid = axPID(element)
+                if pid != 0, pid != appPID {
+                    if let children = try axChildren(element) {
+                        stack.append(contentsOf: children.reversed())
+                    }
+                    continue
+                }
+            }
+            let role = try axRole(element)
+            let title = try axString(element, kAXTitleAttribute as CFString) ?? ""
+            let description = try axString(element, kAXDescriptionAttribute as CFString) ?? ""
+            let identifier = try axString(element, kAXIdentifierAttribute as CFString) ?? ""
+            if ["AXMenuItem", "AXButton"].contains(role),
+               identifier == "settings-menu-button"
+               || title.localizedCaseInsensitiveContains(needle)
+               || description.localizedCaseInsensitiveContains(needle) {
+                return element
+            }
+            if let children = try axChildren(element) {
+                stack.append(contentsOf: children.reversed())
+            }
+        }
         return nil
     }
 
@@ -822,6 +1169,84 @@ func runHelper() -> Never {
                     resp.error = error.localizedDescription ?? "kAXErrorAPIDisabled (-25211)"
                 } else {
                     resp.error = error.localizedDescription ?? "click failed"
+                }
+            } catch {
+                resp.error = error.localizedDescription
+            }
+
+        case "launch_app":
+            do {
+                session.applyWait(ms: req.wait_ms)
+                try session.configure(homeDir: homeDir, workDir: workDir)
+                try session.launchApp(homeDir: homeDir)
+            } catch let error as UIAutomationSession.AutomationError {
+                if case .apiDisabled = error {
+                    resp.error = error.localizedDescription ?? "kAXErrorAPIDisabled (-25211)"
+                } else {
+                    resp.error = error.localizedDescription ?? "launch_app failed"
+                }
+            } catch {
+                resp.error = error.localizedDescription
+            }
+
+        case "click_settings_menu":
+            do {
+                session.applyWait(ms: req.wait_ms)
+                try session.clickSettingsMenu()
+            } catch let error as UIAutomationSession.AutomationError {
+                if case .apiDisabled = error {
+                    resp.error = error.localizedDescription ?? "kAXErrorAPIDisabled (-25211)"
+                } else {
+                    resp.error = error.localizedDescription ?? "click_settings_menu failed"
+                }
+            } catch {
+                resp.error = error.localizedDescription
+            }
+
+        case "check_window":
+            do {
+                session.applyWait(ms: req.wait_ms)
+                let state = try session.checkWindow()
+                resp.window_visible = state.visible
+                resp.window_open = state.open
+            } catch let error as UIAutomationSession.AutomationError {
+                if case .apiDisabled = error {
+                    resp.error = error.localizedDescription ?? "kAXErrorAPIDisabled (-25211)"
+                } else {
+                    resp.error = error.localizedDescription ?? "check_window failed"
+                }
+            } catch {
+                resp.error = error.localizedDescription
+            }
+
+        case "check_window_front":
+            do {
+                session.applyWait(ms: req.wait_ms)
+                let state = try session.checkWindowFront()
+                resp.window_main = state.main
+                resp.app_frontmost = state.frontmost
+                let windowState = try session.checkWindow()
+                resp.window_open = windowState.open
+                resp.window_visible = windowState.visible
+            } catch let error as UIAutomationSession.AutomationError {
+                if case .apiDisabled = error {
+                    resp.error = error.localizedDescription ?? "kAXErrorAPIDisabled (-25211)"
+                } else {
+                    resp.error = error.localizedDescription ?? "check_window_front failed"
+                }
+            } catch {
+                resp.error = error.localizedDescription
+            }
+
+        case "obscure_window":
+            do {
+                session.applyWait(ms: req.wait_ms)
+                try session.obscureWindow()
+            } catch let error as UIAutomationSession.AutomationError {
+                if case .apiDisabled = error {
+                    resp.error = error.localizedDescription ?? "kAXErrorAPIDisabled (-25211)"
+                } else {
+                    resp.error = error.localizedDescription ?? "obscure_window failed"
                 }
             } catch {
                 resp.error = error.localizedDescription
