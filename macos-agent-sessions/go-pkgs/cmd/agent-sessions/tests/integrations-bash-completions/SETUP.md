@@ -54,6 +54,7 @@ agent-sessions integrations --json --global -> JSON integrations list (4 global)
 - With neither flag, both scopes are listed (default). With both flags, same as default.
 - `SeedGrokViaInstall` runs `install --grok --global` before the main command (mixed-status human output tests).
 - `SeedGrokLocal` runs `install --grok` (project-local) before the main command.
+- `CorruptGrokLocalHooks` overwrites `<workDir>/.grok/hooks/agent-sessions.json` with stale JSON after grok seeds (dual-scope different-status tests).
 - `Install` and `DryRun` apply to bash-completions only.
 - `PreExistingCompletion` pre-seeds the completion path before the main command.
 - `PreExistingProfile` pre-seeds `~/.bash_profile` before the main command.
@@ -74,6 +75,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/xhd2015/dot-pkgs/go-pkgs/pathfmt"
 )
 
 const staleCompletionContent = "# stale agent-sessions bash completion\ncomplete -F _stale agent-sessions\n"
@@ -82,142 +85,9 @@ const profileSourceSubstring = ".config/agent-sessions/bash-completion.bash"
 
 const profileSourceMarker = "# agent-sessions bash completion"
 
-// Request drives a single CLI invocation. Defined only at root; descendants must not redefine.
-type Request struct {
-	Action                 string   // "integrations" | "integrations_bash_completions"
-	Args                   []string // extra CLI args after flags
-	JsonOut                bool     // integrations --json
-	Global                 bool     // integrations --global
-	Local                  bool     // integrations --local
-	SeedGrokViaInstall     bool     // run install --grok --global before main command
-	SeedGrokLocal          bool     // run install --grok (local) before main command
-	DryRun                 bool     // bash-completions --dry-run
-	Install                bool     // bash-completions --install
-	PreExistingCompletion  string   // write to completion path before run
-	PreExistingProfile     string   // write to bash profile before run
-	RunTwice               bool     // run command twice (idempotent tests)
-	SeedMatchingCompletion bool     // install bundled content before main command
-	CaptureHelpReference   bool     // capture bash-completions --help stdout
-}
-
-// Response captures CLI outcome and filesystem snapshots.
-type Response struct {
-	ExitCode            int
-	Stdout              string
-	StdoutSecond        string
-	Stderr              string
-	Files               map[string]string // absolute path → content or "MISSING"
-	FakeHome            string
-	WorkDir             string
-	CompletionPath      string
-	ProfilePath         string
-	HelpReferenceStdout string
-}
-
-func Run(t *testing.T, req *Request) (*Response, error) {
-	fakeHome := filepath.Join(t.TempDir(), "home")
-	workDir := filepath.Join(t.TempDir(), "proj")
-	if err := os.MkdirAll(fakeHome, 0755); err != nil {
-		return nil, fmt.Errorf("mkdir fakeHome: %w", err)
-	}
-	if err := os.MkdirAll(workDir, 0755); err != nil {
-		return nil, fmt.Errorf("mkdir workDir: %w", err)
-	}
-
-	pkgDir := filepath.Join(DOCTEST_ROOT, "..", "..")
-	binaryPath := filepath.Join(t.TempDir(), "agent-sessions")
-	buildCmd := exec.Command("go", "build", "-o", binaryPath, ".")
-	buildCmd.Dir = pkgDir
-	if out, err := buildCmd.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("go build failed: %w\n%s", err, out)
-	}
-
-	t.Setenv("HOME", fakeHome)
-	completionPath := completionPath(fakeHome)
-	profilePath := profilePath(fakeHome)
-
-	if req.PreExistingCompletion != "" {
-		if err := os.MkdirAll(filepath.Dir(completionPath), 0755); err != nil {
-			return nil, fmt.Errorf("mkdir preexisting completion dir: %w", err)
-		}
-		if err := os.WriteFile(completionPath, []byte(req.PreExistingCompletion), 0644); err != nil {
-			return nil, fmt.Errorf("write preexisting completion: %w", err)
-		}
-	}
-
-	if req.PreExistingProfile != "" {
-		if err := os.WriteFile(profilePath, []byte(req.PreExistingProfile), 0644); err != nil {
-			return nil, fmt.Errorf("write preexisting profile: %w", err)
-		}
-	}
-
-	execCLI := func(args []string) (stdout, stderr string, exitCode int) {
-		cmd := exec.Command(binaryPath, args...)
-		cmd.Dir = workDir
-		cmd.Env = os.Environ()
-		var stdoutBuf, stderrBuf strings.Builder
-		cmd.Stdout = &stdoutBuf
-		cmd.Stderr = &stderrBuf
-		err := cmd.Run()
-		code := 0
-		if err != nil {
-			if exitErr, ok := err.(*exec.ExitError); ok {
-				code = exitErr.ExitCode()
-			} else {
-				return "", "", -1
-			}
-		}
-		return stdoutBuf.String(), stderrBuf.String(), code
-	}
-
-	if req.SeedMatchingCompletion {
-		seedArgs := []string{"integrations", "bash-completions", "--install"}
-		if _, _, code := execCLI(seedArgs); code != 0 {
-			return nil, fmt.Errorf("seed install failed with exit code %d", code)
-		}
-	}
-
-	if req.SeedGrokViaInstall {
-		seedArgs := []string{"install", "--grok", "--global"}
-		if _, _, code := execCLI(seedArgs); code != 0 {
-			return nil, fmt.Errorf("seed grok global install failed with exit code %d", code)
-		}
-	}
-
-	if req.SeedGrokLocal {
-		seedArgs := []string{"install", "--grok"}
-		if _, _, code := execCLI(seedArgs); code != 0 {
-			return nil, fmt.Errorf("seed grok local install failed with exit code %d", code)
-		}
-	}
-
-	args := buildIntegrationsArgs(req)
-	stdout, stderr, exitCode := execCLI(args)
-
-	stdoutSecond := ""
-	if req.RunTwice {
-		stdoutSecond, _, _ = execCLI(args)
-	}
-
-	helpRef := ""
-	if req.CaptureHelpReference {
-		helpRef, _, _ = execCLI([]string{"integrations", "bash-completions", "--help"})
-	}
-
-	files := snapshotInstallFiles(completionPath, profilePath)
-
-	return &Response{
-		ExitCode:            exitCode,
-		Stdout:              stdout,
-		StdoutSecond:        stdoutSecond,
-		Stderr:              stderr,
-		Files:               files,
-		FakeHome:            fakeHome,
-		WorkDir:             workDir,
-		CompletionPath:      completionPath,
-		ProfilePath:         profilePath,
-		HelpReferenceStdout: helpRef,
-	}, nil
+func Setup(t *testing.T, req *Request) error {
+	t.Logf("integrations-bash-completions: shared harness ready")
+	return nil
 }
 
 func buildIntegrationsArgs(req *Request) []string {
@@ -457,34 +327,150 @@ func countAllIntegrationRows(t *testing.T, stdout string) int {
 	return len(integrationTableRows(stdout))
 }
 
-func assertDualScopeAllMissing(t *testing.T, stdout string) {
+func withHumanDisplayEnv(t *testing.T, resp *Response, fn func()) {
+	t.Helper()
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	defer func() {
+		if err := os.Chdir(origWd); err != nil {
+			t.Fatalf("restore wd: %v", err)
+		}
+	}()
+	t.Setenv("HOME", resp.FakeHome)
+	if err := os.Chdir(resp.WorkDir); err != nil {
+		t.Fatalf("chdir workDir %q: %v", resp.WorkDir, err)
+	}
+	fn()
+}
+
+func humanDisplayPath(t *testing.T, resp *Response, absPath string) string {
+	t.Helper()
+	var result string
+	withHumanDisplayEnv(t, resp, func() {
+		result = pathfmt.Short(absPath)
+	})
+	return result
+}
+
+func integrationGlobalPath(resp *Response, id string) string {
+	switch id {
+	case "grok":
+		return filepath.Join(resp.FakeHome, ".grok", "hooks", "agent-sessions.json")
+	case "opencode":
+		return filepath.Join(resp.FakeHome, ".config", "opencode", "plugins", "agent-sessions.ts")
+	case "pi":
+		return filepath.Join(resp.FakeHome, ".pi", "agent", "extensions", "agent-sessions-hook.ts")
+	case "codex":
+		return filepath.Join(resp.FakeHome, ".codex", "hooks.json")
+	default:
+		return ""
+	}
+}
+
+func integrationLocalPath(resp *Response, id string) string {
+	switch id {
+	case "grok":
+		return filepath.Join(resp.WorkDir, ".grok", "hooks", "agent-sessions.json")
+	case "opencode":
+		return filepath.Join(resp.WorkDir, ".opencode", "plugins", "agent-sessions.ts")
+	case "pi":
+		return filepath.Join(resp.WorkDir, ".pi", "extensions", "agent-sessions-hook.ts")
+	case "codex":
+		return filepath.Join(resp.WorkDir, ".codex", "hooks.json")
+	default:
+		return ""
+	}
+}
+
+func assertNoAbsoluteTempPaths(t *testing.T, stdout string, resp *Response) {
+	t.Helper()
+	for _, prefix := range []string{resp.FakeHome, resp.WorkDir} {
+		if prefix != "" && strings.Contains(stdout, prefix) {
+			t.Fatalf("stdout must not contain absolute temp path %q; got:\n%s", prefix, stdout)
+		}
+	}
+	if strings.Contains(stdout, "/var/folders/") || strings.Contains(stdout, "/private/var/folders/") {
+		t.Fatalf("stdout must not contain macOS temp dir prefix; got:\n%s", stdout)
+	}
+}
+
+func assertHumanPathShortened(t *testing.T, stdout, line, absPath string, resp *Response) {
+	t.Helper()
+	want := humanDisplayPath(t, resp, absPath)
+	if !strings.Contains(line, want) {
+		t.Fatalf("line want shortened path %q; line=%q\nstdout:\n%s", want, line, stdout)
+	}
+	assertNoAbsoluteTempPaths(t, line, resp)
+}
+
+func assertDualScopeAllMissing(t *testing.T, stdout string, resp *Response) {
 	t.Helper()
 	assertDualScopeHeader(t, stdout)
 	rows := integrationTableRows(stdout)
-	if len(rows) != 8 {
-		t.Fatalf("expected 8 dual-scope rows (4 agents × 2 scopes), got %d; stdout:\n%s", len(rows), stdout)
+	if len(rows) != 4 {
+		t.Fatalf("expected 4 dual-scope rows (4 agents, both scopes missing), got %d; stdout:\n%s", len(rows), stdout)
 	}
-	wantOrder := []struct {
-		id     string
-		suffix string
-	}{
-		{"grok", "(Global)"}, {"grok", "(Local)"},
-		{"opencode", "(Global)"}, {"opencode", "(Local)"},
-		{"pi", "(Global)"}, {"pi", "(Local)"},
-		{"codex", "(Global)"}, {"codex", "(Local)"},
-	}
-	for i, want := range wantOrder {
+	for i, id := range integrationOrder {
 		if i >= len(rows) {
 			break
 		}
 		row := rows[i]
-		if !strings.HasPrefix(row, want.id+" ") && !strings.HasPrefix(row, want.id+"\t") {
-			t.Fatalf("row %d want id %q, got %q", i, want.id, row)
+		if !strings.HasPrefix(row, id+" ") && !strings.HasPrefix(row, id+"\t") {
+			t.Fatalf("row %d want id %q, got %q", i, id, row)
 		}
-		if !strings.Contains(row, "Missing") || !strings.Contains(row, want.suffix) {
-			t.Fatalf("row %d want Missing %s, got %q", i, want.suffix, row)
+		if !strings.Contains(row, "Missing (Global + Local)") {
+			t.Fatalf("row %d want Missing (Global + Local), got %q", i, row)
 		}
+		if strings.Contains(row, "(Global)") && !strings.Contains(row, "(Global + Local)") {
+			t.Fatalf("row %d must not show separate Global row when both scopes missing; got %q", i, row)
+		}
+		if strings.Contains(row, "(Local)") && !strings.Contains(row, "(Global + Local)") {
+			t.Fatalf("row %d must not show separate Local row when both scopes missing; got %q", i, row)
+		}
+		assertHumanPathShortened(t, stdout, row, integrationGlobalPath(resp, id), resp)
 	}
+	assertNoAbsoluteTempPaths(t, stdout, resp)
+}
+
+func assertDualScopeBothMissingAgent(t *testing.T, stdout, id string, resp *Response) {
+	t.Helper()
+	lines := integrationLines(stdout, id)
+	if len(lines) != 1 {
+		t.Fatalf("%s want 1 collapsed Missing (Global + Local) row, got %d: %v", id, len(lines), lines)
+	}
+	if !strings.Contains(lines[0], "Missing (Global + Local)") {
+		t.Fatalf("%s want Missing (Global + Local); line=%q", id, lines[0])
+	}
+	assertHumanPathShortened(t, stdout, lines[0], integrationGlobalPath(resp, id), resp)
+}
+
+func assertSingleScopeHumanPaths(t *testing.T, stdout string, resp *Response, global bool) {
+	t.Helper()
+	for _, id := range integrationOrder {
+		line := integrationLine(stdout, id)
+		if line == "" {
+			t.Fatalf("stdout missing row for %q; got:\n%s", id, stdout)
+		}
+		var absPath string
+		if global {
+			absPath = integrationGlobalPath(resp, id)
+		} else {
+			absPath = integrationLocalPath(resp, id)
+		}
+		assertHumanPathShortened(t, stdout, line, absPath, resp)
+	}
+	assertNoAbsoluteTempPaths(t, stdout, resp)
+}
+
+func assertJoinedHumanPaths(t *testing.T, stdout, line, globalAbs, localAbs string, resp *Response) {
+	t.Helper()
+	want := humanDisplayPath(t, resp, globalAbs) + " + " + humanDisplayPath(t, resp, localAbs)
+	if !strings.Contains(line, want) {
+		t.Fatalf("line want joined shortened paths %q; line=%q\nstdout:\n%s", want, line, stdout)
+	}
+	assertNoAbsoluteTempPaths(t, line, resp)
 }
 
 func countIntegrationLines(t *testing.T, stdout string) int {

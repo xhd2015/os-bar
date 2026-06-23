@@ -28,6 +28,7 @@ func Assert(t *testing.T, req *Request, resp *Response, err error) {
 		"codex":    "Missing",
 	}
 	assertHumanStatusLabels(t, resp.Stdout, want)
+	assertSingleScopeHumanPaths(t, resp.Stdout, resp, true)
 
 	t.Logf("human-output/all-missing-global OK")
 }

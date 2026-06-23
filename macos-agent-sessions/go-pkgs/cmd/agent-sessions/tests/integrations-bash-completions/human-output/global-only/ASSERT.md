@@ -31,6 +31,7 @@ func Assert(t *testing.T, req *Request, resp *Response, err error) {
 	for _, id := range integrationOrder {
 		assertLineHasHumanLabel(t, resp.Stdout, id)
 	}
+	assertSingleScopeHumanPaths(t, resp.Stdout, resp, true)
 
 	t.Logf("human-output/global-only OK")
 }

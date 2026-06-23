@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	lessflags "github.com/xhd2015/less-flags"
+	"github.com/xhd2015/dot-pkgs/go-pkgs/pathfmt"
 	"github.com/xhd2015/os-bar/macos-agent-sessions/go-pkgs/integrations"
 )
 
@@ -83,6 +84,10 @@ Examples:
 	fmt.Println(string(out))
 }
 
+func humanIntegrationPath(path string) string {
+	return pathfmt.Short(path)
+}
+
 func humanIntegrationStatusLabel(status string) string {
 	switch status {
 	case "missing":
@@ -115,7 +120,7 @@ func printIntegrationsHuman(entries []integrations.IntegrationEntry, includeGlob
 		fmt.Println("Integrations (local):")
 	}
 	for _, entry := range entries {
-		fmt.Printf("  %-10s %-12s %s\n", entry.ID, humanIntegrationStatusLabel(entry.Status), entry.Path)
+		fmt.Printf("  %-10s %-12s %s\n", entry.ID, humanIntegrationStatusLabel(entry.Status), humanIntegrationPath(entry.Path))
 	}
 }
 
@@ -130,14 +135,25 @@ func printDualScopeHumanRows(entries []integrations.IntegrationEntry) {
 		if globalEntry.Scope != "global" {
 			globalEntry, localEntry = localEntry, globalEntry
 		}
-		if globalEntry.Status == localEntry.Status && globalEntry.Status != "missing" {
+
+		globalMissing := globalEntry.Status == "missing"
+		localMissing := localEntry.Status == "missing"
+
+		switch {
+		case globalMissing && localMissing:
+			fmt.Printf("  %-10s %-30s %s\n", globalEntry.ID, "Missing (Global + Local)", humanIntegrationPath(globalEntry.Path))
+		case globalMissing:
+			printDualScopeHumanRow(localEntry, "Local")
+		case localMissing:
+			printDualScopeHumanRow(globalEntry, "Global")
+		case globalEntry.Status == localEntry.Status:
 			label := humanIntegrationStatusLabel(globalEntry.Status) + " (Global + Local)"
-			path := globalEntry.Path + " + " + localEntry.Path
+			path := humanIntegrationPath(globalEntry.Path) + " + " + humanIntegrationPath(localEntry.Path)
 			fmt.Printf("  %-10s %-30s %s\n", globalEntry.ID, label, path)
-			continue
+		default:
+			printDualScopeHumanRow(globalEntry, "Global")
+			printDualScopeHumanRow(localEntry, "Local")
 		}
-		printDualScopeHumanRow(globalEntry, "Global")
-		printDualScopeHumanRow(localEntry, "Local")
 	}
 }
 
@@ -150,7 +166,7 @@ func dualScopeLabel(scope string) string {
 
 func printDualScopeHumanRow(entry integrations.IntegrationEntry, scopeLabel string) {
 	label := humanIntegrationStatusLabel(entry.Status) + " (" + scopeLabel + ")"
-	fmt.Printf("  %-10s %-30s %s\n", entry.ID, label, entry.Path)
+	fmt.Printf("  %-10s %-30s %s\n", entry.ID, label, humanIntegrationPath(entry.Path))
 }
 
 func cmdInstall(args []string) {

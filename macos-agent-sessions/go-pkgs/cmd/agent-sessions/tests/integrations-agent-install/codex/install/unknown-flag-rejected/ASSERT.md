@@ -3,6 +3,7 @@
 - `resp.ExitCode == 1`.
 - `resp.Stderr` contains `unrecognized flag`.
 - No codex files created under `resp.FakeHome` or `resp.WorkDir`.
+- Stdout does not contain the codex global install hint.
 
 ## Errors
 
@@ -29,6 +30,7 @@ func Assert(t *testing.T, req *Request, resp *Response, err error) {
 	}
 
 	assertNoFilesCreated(t, resp)
+	assertNoCodexGlobalHint(t, resp.Stdout)
 
 	t.Logf("codex-unknown-flag-rejected OK")
 }

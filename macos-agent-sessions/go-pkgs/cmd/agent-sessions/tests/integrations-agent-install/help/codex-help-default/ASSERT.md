@@ -4,6 +4,7 @@
 - `resp.Stdout` equals `resp.HelpReferenceStdout` (bare invocation matches `--help`).
 - Help text describes purpose and lists flags (`--install`, `--dry-run`, `--global`, `-h`, `--help`).
 - Help text contains an `Examples:` section.
+- Help text does not contain the codex global install hint.
 
 ## Exit Code
 
@@ -33,6 +34,7 @@ func Assert(t *testing.T, req *Request, resp *Response, err error) {
 	if !strings.Contains(resp.Stdout, "Examples:") {
 		t.Fatalf("codex help missing Examples section; got:\n%s", resp.Stdout)
 	}
+	assertNoCodexGlobalHint(t, resp.Stdout)
 
 	t.Logf("codex-help-default OK")
 }

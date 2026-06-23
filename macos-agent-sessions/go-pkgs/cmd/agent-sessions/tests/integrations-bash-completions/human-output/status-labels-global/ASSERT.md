@@ -27,6 +27,7 @@ func Assert(t *testing.T, req *Request, resp *Response, err error) {
 		"codex":    "Missing",
 	}
 	assertHumanStatusLabels(t, resp.Stdout, want)
+	assertSingleScopeHumanPaths(t, resp.Stdout, resp, true)
 
 	for _, line := range strings.Split(resp.Stdout, "\n") {
 		if strings.Contains(line, "grok") && strings.Contains(line, "up_to_date") {

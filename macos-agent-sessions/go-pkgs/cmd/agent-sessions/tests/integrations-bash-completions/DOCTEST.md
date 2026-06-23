@@ -8,6 +8,10 @@ regression of existing `integrations --json` behavior.
 All tests run in isolated temporary `HOME` and workspace directories — never
 the real user home.
 
+## Version
+
+0.0.2
+
 # DSN (Domain Specific Notion)
 
 The **CLI binary** is the entry point. It parses top-level subcommands and
@@ -27,8 +31,18 @@ scope flags, both global (`~`) and project-local (`cwd`) paths are included.
 The **human formatter** renders scope-aware headers and rows. Single-scope
 mode uses `Integrations (global):` or `Integrations (local):` with one row per
 agent and no scope suffixes. Dual-scope mode uses bare `Integrations:` and
-collapses rows when both scopes share the same non-missing status; otherwise
-emits global then local rows per agent with `(Global)` / `(Local)` suffixes.
+omits or merges rows by per-scope existence: when both scopes are missing,
+one row with `Missing (Global + Local)` and the global path only; when only
+one scope is present, one row with that scope's status and path; when both are
+non-missing with the same status, one collapsed row with `(Global + Local)` and
+joined paths; only when both scopes are non-missing with different statuses
+does the formatter emit two rows with `(Global)` and `(Local)` suffixes.
+
+The **path shortener** (`pathfmt.Short`) applies only to human-readable path
+columns. Global install paths under `HOME` display as `~/...`; local paths under
+the process cwd display as cwd-relative (e.g. `.grok/...`); joined dual paths
+shorten each side independently (`~/... + .grok/...`). JSON output and file I/O
+keep absolute paths unchanged.
 
 The **bash-completions handler** prints subcommand help when invoked without
 `--install`, or installs/updates an embedded completion script and ensures the
@@ -91,7 +105,7 @@ integrations-bash-completions/              ROOT: Request{Action, JsonOut, Globa
 │   │
 │   ├── default-both-scopes/                LEAF: integrations (no flags)
 │   │   ├── SETUP → default flags
-│   │   ├── ASSERT → Integrations: header, 8 Missing rows with suffixes
+│   │   ├── ASSERT → Integrations: header, 4 Missing (Global + Local) rows
 │   │
 │   ├── local-only/                         LEAF: integrations --local
 │   │   ├── SETUP → Local=true
@@ -117,9 +131,17 @@ integrations-bash-completions/              ROOT: Request{Action, JsonOut, Globa
 │   │   ├── SETUP → SeedGrokViaInstall + SeedGrokLocal
 │   │   ├── ASSERT → grok collapsed Up to date (Global + Local)
 │   │
+│   ├── local-only-installed/               LEAF: grok local only seeded
+│   │   ├── SETUP → SeedGrokLocal=true
+│   │   ├── ASSERT → grok Up to date (Local); others Missing (Global + Local)
+│   │
+│   ├── different-statuses-both-installed/  LEAF: grok global up_to_date, local outdated
+│   │   ├── SETUP → seeds + CorruptGrokLocalHooks
+│   │   ├── ASSERT → grok 2 rows (Global)/(Local); others collapsed missing
+│   │
 │   ├── mixed-scopes/                       LEAF: grok global only seeded
 │   │   ├── SETUP → SeedGrokViaInstall=true
-│   │   ├── ASSERT → grok Up to date (Global) + Missing (Local)
+│   │   ├── ASSERT → grok Up to date (Global); others Missing (Global + Local)
 │   │
 │   ├── json-both-scopes/                   LEAF: integrations --json
 │   │   ├── SETUP → JsonOut=true
@@ -129,9 +151,17 @@ integrations-bash-completions/              ROOT: Request{Action, JsonOut, Globa
 │   │   ├── SETUP → JsonOut=true, Local=true
 │   │   ├── ASSERT → 4 entries, scope=local
 │   │
-│   └── json-still-works/                   LEAF: integrations --json --global
-│       ├── SETUP → JsonOut=true, Global=true
-│       ├── ASSERT → valid JSON with 4 integrations
+│   ├── json-still-works/                   LEAF: integrations --json --global
+│   │   ├── SETUP → JsonOut=true, Global=true
+│   │   ├── ASSERT → valid JSON with 4 integrations
+│   │
+│   └── path-shortening/                    DECISION: human path display rules
+│       └── [SETUP] grouping for pathfmt.Short display assertions
+│       │
+│       ├── global-tilde-paths/             LEAF: --global, all missing, ~/... paths
+│       ├── local-relative-paths/           LEAF: --local, all missing, .foo/... paths
+│       ├── dual-joined-shortened/          LEAF: grok both scopes, ~/... + .grok/...
+│       └── no-absolute-leak/               LEAF: default dual-scope, no temp prefixes
 │
 └── routing/                                DECISION: integrations JSON regression
     └── [SETUP] req.Action = integrations, JsonOut=true
@@ -157,18 +187,24 @@ integrations-bash-completions/              ROOT: Request{Action, JsonOut, Globa
 | 10 | `bash-completions/install/dry-run-existing/` | Dry-run on matching file reports up to date |
 | 11 | `bash-completions/install/dry-run-would-update/` | Dry-run on stale file reports would update |
 | 12 | `bash-completions/install/unknown-flag-rejected/` | Unknown flag exits 1 with error |
-| 13 | `human-output/default-both-scopes/` | `integrations` prints dual-scope human table (default) |
+| 13 | `human-output/default-both-scopes/` | `integrations` prints 4 collapsed Missing (Global + Local) rows |
 | 14 | `human-output/local-only/` | `integrations --local` prints local human table |
 | 15 | `human-output/global-only/` | `integrations --global` prints global human table |
 | 16 | `human-output/both-flags-same-as-default/` | `--global --local` same as default |
 | 17 | `human-output/all-missing-global/` | Empty HOME + `--global` → all `Missing`, no suffixes |
 | 18 | `human-output/status-labels-global/` | Seeded grok → `Up to date`, others `Missing` |
 | 19 | `human-output/global-plus-local-installed/` | Grok both scopes → collapsed `(Global + Local)` row |
-| 20 | `human-output/mixed-scopes/` | Grok global only → split global/local rows |
-| 21 | `human-output/json-both-scopes/` | `--json` returns 8 global+local entries |
-| 22 | `human-output/json-local-only/` | `--json --local` returns 4 local entries |
-| 23 | `human-output/json-still-works/` | `--json --global` JSON regression from human-output branch |
-| 24 | `routing/integrations-json-unchanged/` | `integrations --json --global` unchanged |
+| 20 | `human-output/local-only-installed/` | Grok local only → `Up to date (Local)` under dual-scope default |
+| 21 | `human-output/different-statuses-both-installed/` | Grok global up_to_date + local outdated → 2 split rows |
+| 22 | `human-output/mixed-scopes/` | Grok global only → `Up to date (Global)`; others collapsed missing |
+| 23 | `human-output/json-both-scopes/` | `--json` returns 8 global+local entries |
+| 24 | `human-output/json-local-only/` | `--json --local` returns 4 local entries |
+| 25 | `human-output/json-still-works/` | `--json --global` JSON regression from human-output branch |
+| 26 | `human-output/path-shortening/global-tilde-paths/` | `--global` rows show `~/...` not absolute HOME |
+| 27 | `human-output/path-shortening/local-relative-paths/` | `--local` rows show cwd-relative `.foo/...` paths |
+| 28 | `human-output/path-shortening/dual-joined-shortened/` | Collapsed row joins `~/... + .grok/...` |
+| 29 | `human-output/path-shortening/no-absolute-leak/` | Default dual-scope stdout has no temp-dir prefixes |
+| 30 | `routing/integrations-json-unchanged/` | `integrations --json --global` unchanged |
 
 ## Coverage Map
 
@@ -186,17 +222,24 @@ integrations-bash-completions/              ROOT: Request{Action, JsonOut, Globa
 | Dry-run matching file | `dry-run-existing` | ✓ |
 | Dry-run would update | `dry-run-would-update` | ✓ |
 | Unknown flag rejection | `unknown-flag-rejected` | ✓ |
-| Default dual-scope human table | `default-both-scopes` | ✓ |
+| Default dual-scope collapsed missing rows | `default-both-scopes` | ✓ |
 | Human table local only | `local-only` | ✓ |
 | Human table global only | `global-only` | ✓ |
 | Both scope flags = default | `both-flags-same-as-default` | ✓ |
 | All missing human labels (global) | `all-missing-global` | ✓ |
 | Mixed human status labels (global) | `status-labels-global` | ✓ |
-| Collapsed dual-scope row | `global-plus-local-installed` | ✓ |
-| Split dual-scope rows | `mixed-scopes` | ✓ |
+| Collapsed dual-scope row (same status) | `global-plus-local-installed` | ✓ |
+| Local-only installed dual-scope row | `local-only-installed` | ✓ |
+| Split dual-scope rows (different statuses) | `different-statuses-both-installed` | ✓ |
+| Global-only installed dual-scope row | `mixed-scopes` | ✓ |
 | JSON both scopes (8 entries) | `json-both-scopes` | ✓ |
 | JSON local only (4 entries) | `json-local-only` | ✓ |
 | JSON path --global regression | `json-still-works` | ✓ |
+| Human global paths shortened to ~/ | `global-tilde-paths`, all global-scope human leaves | ✓ |
+| Human local paths cwd-relative | `local-relative-paths`, `local-only` | ✓ |
+| Human joined dual paths shortened | `dual-joined-shortened`, `global-plus-local-installed` | ✓ |
+| No absolute temp prefixes in human stdout | `no-absolute-leak`, all human leaves | ✓ |
+| JSON paths remain absolute | `json-both-scopes`, `json-local-only`, `json-still-works` | ✓ |
 | Integrations JSON routing regression | `integrations-json-unchanged` | ✓ |
 
 ## How to Run
@@ -204,5 +247,164 @@ integrations-bash-completions/              ROOT: Request{Action, JsonOut, Globa
 ```sh
 cd macos-agent-sessions/go-pkgs/cmd/agent-sessions && doctest vet ./tests/integrations-bash-completions
 cd macos-agent-sessions/go-pkgs/cmd/agent-sessions && doctest test ./tests/integrations-bash-completions
+cd macos-agent-sessions/go-pkgs/cmd/agent-sessions && doctest test ./tests/integrations-bash-completions/human-output/...
 cd macos-agent-sessions/go-pkgs/cmd/agent-sessions && doctest test -v ./tests/integrations-bash-completions/...
+```
+
+```go
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+type Request struct {
+	Action                 string
+	Args                   []string
+	JsonOut                bool
+	Global                 bool
+	Local                  bool
+	SeedGrokViaInstall     bool
+	SeedGrokLocal          bool
+	CorruptGrokLocalHooks  bool
+	DryRun                 bool
+	Install                bool
+	PreExistingCompletion  string
+	PreExistingProfile     string
+	RunTwice               bool
+	SeedMatchingCompletion bool
+	CaptureHelpReference   bool
+}
+
+type Response struct {
+	ExitCode            int
+	Stdout              string
+	StdoutSecond        string
+	Stderr              string
+	Files               map[string]string
+	FakeHome            string
+	WorkDir             string
+	CompletionPath      string
+	ProfilePath         string
+	HelpReferenceStdout string
+}
+
+func Run(t *testing.T, req *Request) (*Response, error) {
+	fakeHome := filepath.Join(t.TempDir(), "home")
+	workDir := filepath.Join(t.TempDir(), "proj")
+	if err := os.MkdirAll(fakeHome, 0755); err != nil {
+		return nil, fmt.Errorf("mkdir fakeHome: %w", err)
+	}
+	if err := os.MkdirAll(workDir, 0755); err != nil {
+		return nil, fmt.Errorf("mkdir workDir: %w", err)
+	}
+
+	pkgDir := filepath.Join(DOCTEST_ROOT, "..", "..")
+	binaryPath := filepath.Join(t.TempDir(), "agent-sessions")
+	buildCmd := exec.Command("go", "build", "-o", binaryPath, ".")
+	buildCmd.Dir = pkgDir
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("go build failed: %w\n%s", err, out)
+	}
+
+	t.Setenv("HOME", fakeHome)
+	completionPath := completionPath(fakeHome)
+	profilePath := profilePath(fakeHome)
+
+	if req.PreExistingCompletion != "" {
+		if err := os.MkdirAll(filepath.Dir(completionPath), 0755); err != nil {
+			return nil, fmt.Errorf("mkdir preexisting completion dir: %w", err)
+		}
+		if err := os.WriteFile(completionPath, []byte(req.PreExistingCompletion), 0644); err != nil {
+			return nil, fmt.Errorf("write preexisting completion: %w", err)
+		}
+	}
+
+	if req.PreExistingProfile != "" {
+		if err := os.WriteFile(profilePath, []byte(req.PreExistingProfile), 0644); err != nil {
+			return nil, fmt.Errorf("write preexisting profile: %w", err)
+		}
+	}
+
+	execCLI := func(args []string) (stdout, stderr string, exitCode int) {
+		cmd := exec.Command(binaryPath, args...)
+		cmd.Dir = workDir
+		cmd.Env = os.Environ()
+		var stdoutBuf, stderrBuf strings.Builder
+		cmd.Stdout = &stdoutBuf
+		cmd.Stderr = &stderrBuf
+		err := cmd.Run()
+		code := 0
+		if err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				code = exitErr.ExitCode()
+			} else {
+				return "", "", -1
+			}
+		}
+		return stdoutBuf.String(), stderrBuf.String(), code
+	}
+
+	if req.SeedMatchingCompletion {
+		seedArgs := []string{"integrations", "bash-completions", "--install"}
+		if _, _, code := execCLI(seedArgs); code != 0 {
+			return nil, fmt.Errorf("seed install failed with exit code %d", code)
+		}
+	}
+
+	if req.SeedGrokViaInstall {
+		seedArgs := []string{"install", "--grok", "--global"}
+		if _, _, code := execCLI(seedArgs); code != 0 {
+			return nil, fmt.Errorf("seed grok global install failed with exit code %d", code)
+		}
+	}
+
+	if req.SeedGrokLocal {
+		seedArgs := []string{"install", "--grok"}
+		if _, _, code := execCLI(seedArgs); code != 0 {
+			return nil, fmt.Errorf("seed grok local install failed with exit code %d", code)
+		}
+	}
+
+	if req.CorruptGrokLocalHooks {
+		localHooks := filepath.Join(workDir, ".grok", "hooks", "agent-sessions.json")
+		if err := os.MkdirAll(filepath.Dir(localHooks), 0755); err != nil {
+			return nil, fmt.Errorf("mkdir corrupt grok local hooks dir: %w", err)
+		}
+		if err := os.WriteFile(localHooks, []byte(`{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"stale"}]}]}}`), 0644); err != nil {
+			return nil, fmt.Errorf("write corrupt grok local hooks: %w", err)
+		}
+	}
+
+	args := buildIntegrationsArgs(req)
+	stdout, stderr, exitCode := execCLI(args)
+
+	stdoutSecond := ""
+	if req.RunTwice {
+		stdoutSecond, _, _ = execCLI(args)
+	}
+
+	helpRef := ""
+	if req.CaptureHelpReference {
+		helpRef, _, _ = execCLI([]string{"integrations", "bash-completions", "--help"})
+	}
+
+	files := snapshotInstallFiles(completionPath, profilePath)
+
+	return &Response{
+		ExitCode:            exitCode,
+		Stdout:              stdout,
+		StdoutSecond:        stdoutSecond,
+		Stderr:              stderr,
+		Files:               files,
+		FakeHome:            fakeHome,
+		WorkDir:             workDir,
+		CompletionPath:      completionPath,
+		ProfilePath:         profilePath,
+		HelpReferenceStdout: helpRef,
+	}, nil
+}
 ```

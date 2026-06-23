@@ -1,10 +1,10 @@
 # Scenario
 
-**Feature**: split rows when grok global installed but local missing
+**Feature**: global-only installed row when local scope missing
 
 ```
 # seed grok globally only, list both scopes
-install --grok --global -> integrations -> grok Up to date (Global) + Missing (Local)
+install --grok --global -> integrations -> grok Up to date (Global); others Missing (Global + Local)
 ```
 
 ## Steps
@@ -14,7 +14,7 @@ install --grok --global -> integrations -> grok Up to date (Global) + Missing (L
 
 ## Context
 
-- Different statuses across scopes → two rows per agent with scope suffixes.
+- Global installed, local missing → one `Up to date (Global)` row; both missing → collapsed `Missing (Global + Local)`.
 
 ```go
 func Setup(t *testing.T, req *Request) error {

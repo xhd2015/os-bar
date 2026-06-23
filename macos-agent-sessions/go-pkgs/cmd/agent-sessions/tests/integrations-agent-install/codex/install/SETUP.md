@@ -18,6 +18,8 @@ agent-sessions integrations codex --install --dry-run -> stdout only
 
 - Fresh local install creates hooks.json with one Stop group and executable stop script.
 - Global install writes under fakeHome only.
+- Install stdout paths use `pathfmt.Short` (local `.codex/...`, global `~/.codex/...`).
+- Successful local install prints a global hint; global install, dry-run, and help omit it.
 - Unknown flags must be rejected with exit 1.
 
 ```go

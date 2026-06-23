@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/xhd2015/dot-pkgs/go-pkgs/pathfmt"
 )
 
 //go:embed scripts/pi-agent-sessions-hook.ts
@@ -29,6 +31,10 @@ const (
 	AgentSessionsHookStatus  = "os-bar agent-sessions notify"
 	agentSessionsScriptToken = "__AGENT_SESSIONS_SCRIPT__"
 )
+
+func displayPath(path string) string {
+	return pathfmt.Short(path)
+}
 
 // IntegrationEntry describes install status for one integration target.
 type IntegrationEntry struct {
@@ -377,38 +383,38 @@ func InstallCodex(global bool, homeDir, cwd string, dryRun bool) {
 
 	existing, err := os.ReadFile(configPath)
 	if err != nil && !os.IsNotExist(err) {
-		fmt.Printf("  codex hooks: error reading %s: %v\n", configPath, err)
+		fmt.Printf("  codex hooks: error reading %s: %v\n", displayPath(configPath), err)
 		return
 	}
 
 	merged, err := MergeCodexHooks(existing, codexHooksJSON, scriptPath)
 	if err != nil {
-		fmt.Printf("  codex hooks: error merging %s: %v\n", configPath, err)
+		fmt.Printf("  codex hooks: error merging %s: %v\n", displayPath(configPath), err)
 		return
 	}
 
 	existingNorm := strings.ReplaceAll(string(existing), "\r\n", "\n")
 	mergedNorm := strings.ReplaceAll(string(merged), "\r\n", "\n")
 	if existingNorm == mergedNorm {
-		fmt.Printf("  codex hooks: up to date → %s\n", configPath)
+		fmt.Printf("  codex hooks: up to date → %s\n", displayPath(configPath))
 		return
 	}
 
 	if len(existing) == 0 {
-		fmt.Printf("  codex hooks: install → %s\n", configPath)
+		fmt.Printf("  codex hooks: install → %s\n", displayPath(configPath))
 	} else {
-		fmt.Printf("  codex hooks: update → %s\n", configPath)
+		fmt.Printf("  codex hooks: update → %s\n", displayPath(configPath))
 	}
 	if dryRun {
 		return
 	}
 
 	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
-		fmt.Printf("    error: cannot create directory %s: %v\n", filepath.Dir(configPath), err)
+		fmt.Printf("    error: cannot create directory %s: %v\n", displayPath(filepath.Dir(configPath)), err)
 		return
 	}
 	if err := os.WriteFile(configPath, merged, 0644); err != nil {
-		fmt.Printf("    error: cannot write %s: %v\n", configPath, err)
+		fmt.Printf("    error: cannot write %s: %v\n", displayPath(configPath), err)
 		return
 	}
 	fmt.Printf("    written\n")
@@ -426,17 +432,17 @@ func CheckAndWrite(label string, targetPath string, script []byte, dryRun bool) 
 	existing, err := os.ReadFile(targetPath)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			fmt.Printf("  %s: error reading %s: %v\n", label, targetPath, err)
+			fmt.Printf("  %s: error reading %s: %v\n", label, displayPath(targetPath), err)
 			return
 		}
-		fmt.Printf("  %s: install → %s\n", label, targetPath)
+		fmt.Printf("  %s: install → %s\n", label, displayPath(targetPath))
 		if !dryRun {
 			if err := os.MkdirAll(dir, 0755); err != nil {
-				fmt.Printf("    error: cannot create directory %s: %v\n", dir, err)
+				fmt.Printf("    error: cannot create directory %s: %v\n", displayPath(dir), err)
 				return
 			}
 			if err := os.WriteFile(targetPath, script, perm); err != nil {
-				fmt.Printf("    error: cannot write %s: %v\n", targetPath, err)
+				fmt.Printf("    error: cannot write %s: %v\n", displayPath(targetPath), err)
 				return
 			}
 			fmt.Printf("    written\n")
@@ -449,11 +455,11 @@ func CheckAndWrite(label string, targetPath string, script []byte, dryRun bool) 
 	scriptNorm := strings.ReplaceAll(string(script), "\r\n", "\n")
 
 	if existingNorm == scriptNorm {
-		fmt.Printf("  %s: up to date → %s\n", label, targetPath)
+		fmt.Printf("  %s: up to date → %s\n", label, displayPath(targetPath))
 		return
 	}
 
-	fmt.Printf("  %s: update → %s\n", label, targetPath)
+	fmt.Printf("  %s: update → %s\n", label, displayPath(targetPath))
 	if dryRun {
 		if len(existing) != len(script) {
 			fmt.Printf("    (size differs: installed %d bytes, bundled %d bytes)\n", len(existing), len(script))
@@ -462,7 +468,7 @@ func CheckAndWrite(label string, targetPath string, script []byte, dryRun bool) 
 	}
 
 	if err := os.WriteFile(targetPath, script, perm); err != nil {
-		fmt.Printf("    error: cannot write %s: %v\n", targetPath, err)
+		fmt.Printf("    error: cannot write %s: %v\n", displayPath(targetPath), err)
 		return
 	}
 	fmt.Printf("    updated\n")

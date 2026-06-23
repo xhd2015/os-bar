@@ -1,10 +1,9 @@
 ## Expected
 
 - `resp.ExitCode == 0`.
-- `resp.Stdout` contains bare header `Integrations:`.
-- Grok appears on exactly one row containing `Up to date (Global + Local)`.
-- Grok row joins shortened global and local paths with ` + ` (e.g. `~/.grok/... + .grok/...`).
-- opencode, pi, and codex each appear on exactly one row with `Missing (Global + Local)` and the shortened global path only.
+- Grok row contains `Up to date (Global + Local)` with joined shortened paths.
+- Joined path uses `~/.grok/... + .grok/...` form (no absolute temp prefixes).
+- Other agents show `Missing (Global + Local)` with shortened global paths only.
 
 ## Exit Code
 
@@ -21,11 +20,10 @@ func Assert(t *testing.T, req *Request, resp *Response, err error) {
 
 	assertDualScopeHeader(t, resp.Stdout)
 
-	grokLines := integrationLines(resp.Stdout, "grok")
-	if len(grokLines) != 1 {
-		t.Fatalf("expected 1 collapsed grok row, got %d: %v; stdout:\n%s", len(grokLines), grokLines, resp.Stdout)
+	grokLine := integrationLine(resp.Stdout, "grok")
+	if grokLine == "" {
+		t.Fatalf("stdout missing grok row; got:\n%s", resp.Stdout)
 	}
-	grokLine := grokLines[0]
 	if !strings.Contains(grokLine, "Up to date (Global + Local)") {
 		t.Fatalf("grok row want collapsed label; line=%q", grokLine)
 	}
@@ -36,6 +34,6 @@ func Assert(t *testing.T, req *Request, resp *Response, err error) {
 	}
 	assertNoAbsoluteTempPaths(t, resp.Stdout, resp)
 
-	t.Logf("human-output/global-plus-local-installed OK")
+	t.Logf("human-output/path-shortening/dual-joined-shortened OK")
 }
 ```

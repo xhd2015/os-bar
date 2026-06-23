@@ -15,7 +15,7 @@ install --grok --global + install --grok -> integrations -> grok Up to date (Glo
 ## Context
 
 - Same non-missing status in both scopes collapses to one row per agent.
-- Other agents remain missing in both scopes → two rows each with suffixes.
+- Other agents remain missing in both scopes → one `Missing (Global + Local)` row each.
 
 ```go
 func Setup(t *testing.T, req *Request) error {

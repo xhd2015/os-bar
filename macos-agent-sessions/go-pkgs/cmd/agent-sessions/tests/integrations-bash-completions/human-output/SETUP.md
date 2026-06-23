@@ -22,7 +22,12 @@ test -> agent-sessions integrations --json --local -> 4 local entries
 
 - `integrations` without `--json` must not error with `--json is required`.
 - Human output uses scope-aware headers, agent order grok/opencode/pi/codex, and macOS UI status labels.
-- Dual-scope mode adds `(Global)` / `(Local)` suffixes when rows are not collapsed.
+- Human path columns use `pathfmt.Short`: global paths under `fakeHome` display as `~/...`,
+  local paths under `workDir` display as cwd-relative (e.g. `.grok/...`), and joined dual paths
+  use `~/... + .grok/...`. Absolute temp-dir prefixes must not appear in human stdout.
+- Dual-scope mode omits or merges rows: both missing → one `Missing (Global + Local)` row
+  with global path; one scope only → one row for that scope; same non-missing status →
+  one `(Global + Local)` row; different non-missing statuses → two `(Global)` / `(Local)` rows.
 
 ## Steps
 
@@ -32,8 +37,9 @@ test -> agent-sessions integrations --json --local -> 4 local entries
 
 - Integration order: grok, opencode, pi, codex.
 - Human status labels: `missing` → `Missing`, `up_to_date` → `Up to date`, `outdated` → `Outdated`.
-- Empty `fakeHome` + empty `workDir` with default flags yields eight `Missing` rows (global then local per agent).
+- Empty `fakeHome` + empty `workDir` with default flags yields four `Missing (Global + Local)` rows (one per agent).
 - Same non-missing status in both scopes collapses to one row with `(Global + Local)` suffix.
+- Only one scope present yields one row with that scope's suffix and path.
 - `json-still-works` leaf sets `JsonOut = true`, `Global = true` (4-entry JSON regression).
 
 ```go

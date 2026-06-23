@@ -50,108 +50,17 @@ agent-sessions integrations bash-completions --install --dry-run -> would instal
 ```go
 import (
 	"encoding/json"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/xhd2015/dot-pkgs/go-pkgs/pathfmt"
 )
 
 const agentSessionsHookStatus = "os-bar agent-sessions notify"
 
-// Request drives a single CLI invocation. Defined only at root; descendants must not redefine.
-type Request struct {
-	Action               string   // "integrations" | "integrations_agent" | "integrations_bash_completions"
-	Agent                string   // "codex" | "grok" | "pi" | "opencode"
-	Args                 []string // extra CLI args after flags
-	JsonOut              bool     // integrations --json
-	Global               bool     // --global
-	Install              bool     // agent/bash-completions --install
-	DryRun               bool     // agent/bash-completions --dry-run
-	CaptureHelpReference bool     // capture agent --help stdout for comparison
-}
-
-// Response captures CLI outcome and filesystem snapshots.
-type Response struct {
-	ExitCode            int
-	Stdout              string
-	Stderr              string
-	Files               map[string]string // absolute path → content or "MISSING"
-	ScriptExecutable    map[string]bool   // path → is executable (.sh scripts)
-	FakeHome            string
-	WorkDir             string
-	CompletionPath      string
-	HelpReferenceStdout string
-}
-
-func Run(t *testing.T, req *Request) (*Response, error) {
-	fakeHome := filepath.Join(t.TempDir(), "home")
-	workDir := filepath.Join(t.TempDir(), "proj")
-	if err := os.MkdirAll(fakeHome, 0755); err != nil {
-		return nil, fmt.Errorf("mkdir fakeHome: %w", err)
-	}
-	if err := os.MkdirAll(workDir, 0755); err != nil {
-		return nil, fmt.Errorf("mkdir workDir: %w", err)
-	}
-
-	pkgDir := filepath.Join(DOCTEST_ROOT, "..", "..")
-	binaryPath := filepath.Join(t.TempDir(), "agent-sessions")
-	buildCmd := exec.Command("go", "build", "-o", binaryPath, ".")
-	buildCmd.Dir = pkgDir
-	if out, err := buildCmd.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("go build failed: %w\n%s", err, out)
-	}
-
-	t.Setenv("HOME", fakeHome)
-	completionPath := completionPath(fakeHome)
-
-	execCLI := func(args []string) (stdout, stderr string, exitCode int) {
-		cmd := exec.Command(binaryPath, args...)
-		cmd.Dir = workDir
-		cmd.Env = os.Environ()
-		var stdoutBuf, stderrBuf strings.Builder
-		cmd.Stdout = &stdoutBuf
-		cmd.Stderr = &stderrBuf
-		err := cmd.Run()
-		code := 0
-		if err != nil {
-			if exitErr, ok := err.(*exec.ExitError); ok {
-				code = exitErr.ExitCode()
-			} else {
-				return "", "", -1
-			}
-		}
-		return stdoutBuf.String(), stderrBuf.String(), code
-	}
-
-	args := buildIntegrationsArgs(req)
-	stdout, stderr, exitCode := execCLI(args)
-
-	helpRef := ""
-	if req.CaptureHelpReference && req.Agent != "" {
-		helpArgs := []string{"integrations", req.Agent, "--help"}
-		helpRef, _, _ = execCLI(helpArgs)
-	}
-
-	paths := expectedAgentPaths(req, fakeHome, workDir)
-	if req.Action == "integrations_bash_completions" {
-		paths = append(paths, completionPath)
-	}
-	files, execMap := snapshotFiles(paths)
-
-	return &Response{
-		ExitCode:            exitCode,
-		Stdout:              stdout,
-		Stderr:              stderr,
-		Files:               files,
-		ScriptExecutable:    execMap,
-		FakeHome:            fakeHome,
-		WorkDir:             workDir,
-		CompletionPath:      completionPath,
-		HelpReferenceStdout: helpRef,
-	}, nil
-}
+const codexGlobalHintCommand = "agent-sessions integrations codex --install --global"
 
 func buildIntegrationsArgs(req *Request) []string {
 	switch req.Action {
@@ -354,6 +263,89 @@ func countCodexStopGroups(t *testing.T, jsonText string) int {
 	t.Helper()
 	hooks := parseCodexHooks(t, jsonText)
 	return len(hooks["Stop"])
+}
+
+func withHumanDisplayEnv(t *testing.T, resp *Response, fn func()) {
+	t.Helper()
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(orig) })
+	t.Setenv("HOME", resp.FakeHome)
+	if err := os.Chdir(resp.WorkDir); err != nil {
+		t.Fatalf("chdir workDir %q: %v", resp.WorkDir, err)
+	}
+	fn()
+}
+
+func humanDisplayPath(t *testing.T, resp *Response, absPath string) string {
+	t.Helper()
+	var result string
+	withHumanDisplayEnv(t, resp, func() {
+		result = pathfmt.Short(absPath)
+	})
+	return result
+}
+
+func codexHooksPath(resp *Response, global bool) string {
+	base := resp.WorkDir
+	if global {
+		base = resp.FakeHome
+	}
+	return filepath.Join(base, ".codex", "hooks.json")
+}
+
+func codexScriptPath(resp *Response, global bool) string {
+	base := resp.WorkDir
+	if global {
+		base = resp.FakeHome
+	}
+	return filepath.Join(base, ".codex", "hooks", "agent-sessions-stop.sh")
+}
+
+func assertNoAbsoluteTempPaths(t *testing.T, stdout string, resp *Response) {
+	t.Helper()
+	for _, prefix := range []string{resp.FakeHome, resp.WorkDir} {
+		if prefix != "" && strings.Contains(stdout, prefix) {
+			t.Fatalf("stdout must not contain absolute temp path %q; got:\n%s", prefix, stdout)
+		}
+	}
+	if strings.Contains(stdout, "/var/folders/") || strings.Contains(stdout, "/private/var/folders/") {
+		t.Fatalf("stdout must not contain macOS temp dir prefix; got:\n%s", stdout)
+	}
+}
+
+func assertStdoutContainsShortenedPath(t *testing.T, stdout, absPath string, resp *Response) {
+	t.Helper()
+	want := humanDisplayPath(t, resp, absPath)
+	if !strings.Contains(stdout, want) {
+		t.Fatalf("stdout want shortened path %q; got:\n%s", want, stdout)
+	}
+}
+
+func assertCodexInstallStdoutShortened(t *testing.T, stdout string, resp *Response, global bool) {
+	t.Helper()
+	assertStdoutContainsShortenedPath(t, stdout, codexScriptPath(resp, global), resp)
+	assertStdoutContainsShortenedPath(t, stdout, codexHooksPath(resp, global), resp)
+	assertNoAbsoluteTempPaths(t, stdout, resp)
+}
+
+func assertCodexGlobalHint(t *testing.T, stdout string) {
+	t.Helper()
+	if !strings.Contains(stdout, "To install globally, run:") {
+		t.Fatalf("stdout missing global install hint; got:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, codexGlobalHintCommand) {
+		t.Fatalf("stdout missing hint command %q; got:\n%s", codexGlobalHintCommand, stdout)
+	}
+}
+
+func assertNoCodexGlobalHint(t *testing.T, stdout string) {
+	t.Helper()
+	if strings.Contains(stdout, "To install globally, run:") {
+		t.Fatalf("stdout must not contain global install hint; got:\n%s", stdout)
+	}
 }
 
 func countOurStopHandlers(t *testing.T, jsonText string) int {

@@ -95,6 +95,11 @@ func cmdIntegrationsAgent(agent string, args []string) {
 	switch agent {
 	case "codex":
 		integrations.InstallCodex(global, homeDir, cwd, dryRun)
+		if !global && !dryRun {
+			fmt.Println()
+			fmt.Println("  To install globally, run:")
+			fmt.Printf("    agent-sessions integrations codex --install --global\n")
+		}
 	case "grok":
 		integrations.InstallGrok(global, homeDir, cwd, dryRun)
 	case "pi":

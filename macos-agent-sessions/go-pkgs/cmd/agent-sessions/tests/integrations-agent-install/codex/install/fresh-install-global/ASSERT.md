@@ -1,9 +1,11 @@
 ## Expected
 
 - `resp.ExitCode == 0`.
+- `resp.Stdout` shows shortened global paths (`~/.codex/hooks/...`, `~/.codex/hooks.json`) on install arrow lines.
+- `resp.Stdout` does not contain the global install hint.
+- `resp.Stdout` does not leak absolute `resp.FakeHome` or `resp.WorkDir` paths.
 - `fakeHome/.codex/hooks.json` and `fakeHome/.codex/hooks/agent-sessions-stop.sh` exist.
 - No codex files under `workDir`.
-- Paths are under `fakeHome` only (isolation).
 
 ## Exit Code
 
@@ -23,6 +25,9 @@ func Assert(t *testing.T, req *Request, resp *Response, err error) {
 		t.Fatalf("expected exit code 0, got %d; stderr=%q", resp.ExitCode, resp.Stderr)
 	}
 
+	assertCodexInstallStdoutShortened(t, resp.Stdout, resp, true)
+	assertNoCodexGlobalHint(t, resp.Stdout)
+
 	hooksPath := filepath.Join(resp.FakeHome, ".codex", "hooks.json")
 	scriptPath := filepath.Join(resp.FakeHome, ".codex", "hooks", "agent-sessions-stop.sh")
 
@@ -41,6 +46,6 @@ func Assert(t *testing.T, req *Request, resp *Response, err error) {
 		t.Fatalf("unexpected codex hooks.json under workDir")
 	}
 
-	t.Logf("codex-fresh-install-global OK: fakeHome=%s", resp.FakeHome)
+	t.Logf("codex-fresh-install-global OK")
 }
 ```

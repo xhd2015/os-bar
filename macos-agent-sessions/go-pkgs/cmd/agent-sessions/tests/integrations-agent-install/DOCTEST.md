@@ -8,6 +8,10 @@ and `bash-completions`, and per-agent install/dry-run smoke tests.
 All tests run in isolated temporary `HOME` and workspace directories — never
 the real user home.
 
+## Version
+
+0.0.2
+
 # DSN (Domain Specific Notion)
 
 The **CLI binary** is the entry point. It parses `integrations` and dispatches
@@ -27,6 +31,15 @@ The **install logic** (`InstallCodex`, `InstallGrok`, `CheckAndWrite`) writes
 agent-specific hook/config files and scripts under project-local (`workDir`) or
 global (`fakeHome`) locations. Codex merge semantics are unchanged and tested
 elsewhere.
+
+The **path shortener** (`pathfmt.Short`) applies only to install CLI stdout
+paths (`install →`, `update →`, `up to date →`, and error lines). Local install
+messages show cwd-relative paths (`.codex/...`); global install messages show
+`~/.codex/...`. File I/O and hooks.json `command` field values remain absolute.
+
+The **global install hint** prints after a successful local codex install,
+suggesting `agent-sessions integrations codex --install --global`. It is
+suppressed for `--global` install, `--dry-run`, and help-only invocations.
 
 The **fake HOME** is an isolated temp directory. `HOME` is overridden so global
 install paths resolve under test control, never touching the real user profile.
@@ -75,15 +88,15 @@ integrations-agent-install/                 ROOT: Request{Action, Agent, Install
 │       │
 │       ├── dry-run-missing/                LEAF: codex --install --dry-run
 │       │   ├── SETUP → Install=true, DryRun=true
-│       │   ├── ASSERT → exit 0, codex install report, hooks.json MISSING
+│       │   ├── ASSERT → exit 0, shortened .codex paths in report, no hint, no writes
 │       │
 │       ├── fresh-install-local/            LEAF: codex --install (local)
 │       │   ├── SETUP → Install=true, Global=false
-│       │   ├── ASSERT → hooks.json + script under workDir with correct content
+│       │   ├── ASSERT → shortened .codex stdout paths, global hint, hooks.json command absolute
 │       │
 │       ├── fresh-install-global/           LEAF: codex --install --global
 │       │   ├── SETUP → Install=true, Global=true
-│       │   ├── ASSERT → files under fakeHome only, not workDir
+│       │   ├── ASSERT → ~/.codex stdout paths, no hint, files under fakeHome only
 │       │
 │       └── unknown-flag-rejected/          LEAF: codex --bogus
 │           ├── SETUP → Args=["--bogus"]
@@ -123,9 +136,9 @@ integrations-agent-install/                 ROOT: Request{Action, Agent, Install
 | 3 | `help/codex-help-flag/` | `integrations codex --help` matches bare help |
 | 4 | `routing/integrations-json-unchanged/` | `integrations --json --global` unchanged |
 | 5 | `routing/bash-completions-still-works/` | `bash-completions --install --dry-run` still works |
-| 6 | `codex/install/dry-run-missing/` | Codex dry-run reports install, no hooks.json |
-| 7 | `codex/install/fresh-install-local/` | Codex local install creates hooks.json + script |
-| 8 | `codex/install/fresh-install-global/` | Codex global install under fakeHome only |
+| 6 | `codex/install/dry-run-missing/` | Codex dry-run shortened paths, no global hint, no writes |
+| 7 | `codex/install/fresh-install-local/` | Codex local install shortened paths + global hint |
+| 8 | `codex/install/fresh-install-global/` | Codex global install `~/.codex/...` paths, no hint |
 | 9 | `codex/install/unknown-flag-rejected/` | Unknown flag on codex subcommand exits 1 |
 | 10 | `grok/install/dry-run-missing/` | Grok dry-run smoke test |
 | 11 | `pi/install/dry-run-missing/` | Pi dry-run smoke test |
@@ -140,9 +153,10 @@ integrations-agent-install/                 ROOT: Request{Action, Agent, Install
 | Codex --help flag | `codex-help-flag` | ✓ |
 | Integrations JSON routing regression | `integrations-json-unchanged` | ✓ |
 | Bash-completions routing regression | `bash-completions-still-works` | ✓ |
-| Codex dry-run (no write) | `codex/install/dry-run-missing` | ✓ |
-| Codex fresh local install | `codex/install/fresh-install-local` | ✓ |
-| Codex fresh global install | `codex/install/fresh-install-global` | ✓ |
+| Codex dry-run shortened paths, no hint | `codex/install/dry-run-missing` | ✓ |
+| Codex local install shortened paths + hint | `codex/install/fresh-install-local` | ✓ |
+| Codex global install ~/.codex paths, no hint | `codex/install/fresh-install-global` | ✓ |
+| Codex help has no global hint | `help/codex-help-default`, `help/codex-help-flag` | ✓ |
 | Codex unknown flag rejection | `codex/install/unknown-flag-rejected` | ✓ |
 | Grok routing + dry-run smoke | `grok/install/dry-run-missing` | ✓ |
 | Pi routing + dry-run smoke | `pi/install/dry-run-missing` | ✓ |
@@ -154,4 +168,108 @@ integrations-agent-install/                 ROOT: Request{Action, Agent, Install
 cd macos-agent-sessions/go-pkgs/cmd/agent-sessions && doctest vet ./tests/integrations-agent-install
 cd macos-agent-sessions/go-pkgs/cmd/agent-sessions && doctest test ./tests/integrations-agent-install
 cd macos-agent-sessions/go-pkgs/cmd/agent-sessions && doctest test -v ./tests/integrations-agent-install/...
+cd macos-agent-sessions/go-pkgs/cmd/agent-sessions && doctest test ./tests/integrations-agent-install/codex/...
+```
+
+```go
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+type Request struct {
+	Action               string   // "integrations" | "integrations_agent" | "integrations_bash_completions"
+	Agent                string   // "codex" | "grok" | "pi" | "opencode"
+	Args                 []string // extra CLI args after flags
+	JsonOut              bool     // integrations --json
+	Global               bool     // --global
+	Install              bool     // agent/bash-completions --install
+	DryRun               bool     // agent/bash-completions --dry-run
+	CaptureHelpReference bool     // capture agent --help stdout for comparison
+}
+
+type Response struct {
+	ExitCode            int
+	Stdout              string
+	Stderr              string
+	Files               map[string]string // absolute path → content or "MISSING"
+	ScriptExecutable    map[string]bool   // path → is executable (.sh scripts)
+	FakeHome            string
+	WorkDir             string
+	CompletionPath      string
+	HelpReferenceStdout string
+}
+
+func Run(t *testing.T, req *Request) (*Response, error) {
+	fakeHome := filepath.Join(t.TempDir(), "home")
+	workDir := filepath.Join(t.TempDir(), "proj")
+	if err := os.MkdirAll(fakeHome, 0755); err != nil {
+		return nil, fmt.Errorf("mkdir fakeHome: %w", err)
+	}
+	if err := os.MkdirAll(workDir, 0755); err != nil {
+		return nil, fmt.Errorf("mkdir workDir: %w", err)
+	}
+
+	pkgDir := filepath.Join(DOCTEST_ROOT, "..", "..")
+	binaryPath := filepath.Join(t.TempDir(), "agent-sessions")
+	buildCmd := exec.Command("go", "build", "-o", binaryPath, ".")
+	buildCmd.Dir = pkgDir
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("go build failed: %w\n%s", err, out)
+	}
+
+	t.Setenv("HOME", fakeHome)
+	completionPath := completionPath(fakeHome)
+
+	execCLI := func(args []string) (stdout, stderr string, exitCode int) {
+		cmd := exec.Command(binaryPath, args...)
+		cmd.Dir = workDir
+		cmd.Env = os.Environ()
+		var stdoutBuf, stderrBuf strings.Builder
+		cmd.Stdout = &stdoutBuf
+		cmd.Stderr = &stderrBuf
+		err := cmd.Run()
+		code := 0
+		if err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				code = exitErr.ExitCode()
+			} else {
+				return "", "", -1
+			}
+		}
+		return stdoutBuf.String(), stderrBuf.String(), code
+	}
+
+	args := buildIntegrationsArgs(req)
+	stdout, stderr, exitCode := execCLI(args)
+
+	helpRef := ""
+	if req.CaptureHelpReference && req.Agent != "" {
+		helpArgs := []string{"integrations", req.Agent, "--help"}
+		helpRef, _, _ = execCLI(helpArgs)
+	}
+
+	paths := expectedAgentPaths(req, fakeHome, workDir)
+	if req.Action == "integrations_bash_completions" {
+		paths = append(paths, completionPath)
+	}
+	files, execMap := snapshotFiles(paths)
+
+	return &Response{
+		ExitCode:            exitCode,
+		Stdout:              stdout,
+		Stderr:              stderr,
+		Files:               files,
+		ScriptExecutable:    execMap,
+		FakeHome:            fakeHome,
+		WorkDir:             workDir,
+		CompletionPath:      completionPath,
+		HelpReferenceStdout: helpRef,
+	}, nil
+}
 ```

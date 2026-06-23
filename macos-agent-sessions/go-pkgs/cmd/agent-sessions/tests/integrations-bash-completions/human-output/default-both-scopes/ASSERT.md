@@ -3,8 +3,8 @@
 - `resp.ExitCode == 0`.
 - `resp.Stderr` does not contain `--json is required`.
 - `resp.Stdout` contains bare header `Integrations:` (not `Integrations (local):` or `Integrations (global):`).
-- `resp.Stdout` lists eight integration rows: global then local for each agent in order grok, opencode, pi, codex.
-- Each row uses human label `Missing` with `(Global)` or `(Local)` scope suffix.
+- `resp.Stdout` lists four integration rows in order grok, opencode, pi, codex.
+- Each row uses human label `Missing (Global + Local)` with the global install path only.
 - `resp.Stdout` is not JSON.
 
 ## Side Effects
@@ -28,7 +28,7 @@ func Assert(t *testing.T, req *Request, resp *Response, err error) {
 	}
 
 	assertNoJSONOutput(t, resp.Stdout)
-	assertDualScopeAllMissing(t, resp.Stdout)
+	assertDualScopeAllMissing(t, resp.Stdout, resp)
 
 	if completionContent(resp.CompletionPath, resp) != "MISSING" {
 		t.Fatalf("expected no completion file for integrations listing")

@@ -1,9 +1,12 @@
 ## Expected
 
 - `resp.ExitCode == 0`.
+- `resp.Stdout` shows shortened local paths (`.codex/hooks/...`, `.codex/hooks.json`) on install arrow lines.
+- `resp.Stdout` contains the global install hint with `agent-sessions integrations codex --install --global`.
+- `resp.Stdout` does not leak absolute `resp.FakeHome` or `resp.WorkDir` paths.
 - `workDir/.codex/hooks.json` exists and contains exactly one Stop group with our statusMessage.
 - `workDir/.codex/hooks/agent-sessions-stop.sh` exists and is executable.
-- Command path in hooks.json points to the installed script path under workDir.
+- Command path in hooks.json points to the absolute installed script path under workDir (not shortened).
 
 ## Exit Code
 
@@ -23,6 +26,9 @@ func Assert(t *testing.T, req *Request, resp *Response, err error) {
 	if resp.ExitCode != 0 {
 		t.Fatalf("expected exit code 0, got %d; stderr=%q", resp.ExitCode, resp.Stderr)
 	}
+
+	assertCodexInstallStdoutShortened(t, resp.Stdout, resp, false)
+	assertCodexGlobalHint(t, resp.Stdout)
 
 	hooksPath := filepath.Join(resp.WorkDir, ".codex", "hooks.json")
 	scriptPath := filepath.Join(resp.WorkDir, ".codex", "hooks", "agent-sessions-stop.sh")
@@ -61,7 +67,10 @@ func Assert(t *testing.T, req *Request, resp *Response, err error) {
 	}
 	cmd := file.Hooks["Stop"][0].Hooks[0].Command
 	if !samePath(t, cmd, scriptPath) {
-		t.Fatalf("command path %q != script path %q", cmd, scriptPath)
+		t.Fatalf("command path %q != absolute script path %q", cmd, scriptPath)
+	}
+	if strings.HasPrefix(cmd, ".codex/") || strings.HasPrefix(cmd, "~/") {
+		t.Fatalf("hooks.json command must stay absolute, got %q", cmd)
 	}
 
 	t.Logf("codex-fresh-install-local OK")

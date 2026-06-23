@@ -1,7 +1,7 @@
 ## Expected
 
 - `resp.ExitCode == 0`.
-- `resp.Stdout` matches default dual-scope output: bare `Integrations:` header and eight `Missing` rows with `(Global)` / `(Local)` suffixes in agent order.
+- `resp.Stdout` matches default dual-scope output: bare `Integrations:` header and four `Missing (Global + Local)` rows in agent order.
 
 ## Exit Code
 
@@ -17,7 +17,7 @@ func Assert(t *testing.T, req *Request, resp *Response, err error) {
 	}
 
 	assertNoJSONOutput(t, resp.Stdout)
-	assertDualScopeAllMissing(t, resp.Stdout)
+	assertDualScopeAllMissing(t, resp.Stdout, resp)
 
 	t.Logf("human-output/both-flags-same-as-default OK")
 }

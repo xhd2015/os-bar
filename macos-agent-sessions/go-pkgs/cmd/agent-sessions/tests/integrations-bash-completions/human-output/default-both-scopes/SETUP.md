@@ -4,7 +4,7 @@
 
 ```
 # no flags: both scopes with bare header
-test -> agent-sessions integrations -> Integrations: + 8 rows (Global/Local suffixes)
+test -> agent-sessions integrations -> Integrations: + 4 collapsed Missing (Global + Local) rows
 ```
 
 ## Steps
