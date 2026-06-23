@@ -1,5 +1,17 @@
 import Foundation
 
+struct DaemonInfo: Decodable {
+    let storagePath: String
+    let port: Int?
+    let eventCount: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case storagePath = "storage_path"
+        case port
+        case eventCount = "event_count"
+    }
+}
+
 enum DaemonClientError: LocalizedError {
     case unreachable(String)
     case badStatus(Int, String)
@@ -37,6 +49,16 @@ final class DaemonClient {
 
     private var baseURL: String {
         "http://127.0.0.1:\(port)"
+    }
+
+    func info() async throws -> DaemonInfo {
+        let (data, response) = try await get(path: "/api/info")
+        try ensureOK(response, data: data)
+        do {
+            return try JSONDecoder().decode(DaemonInfo.self, from: data)
+        } catch {
+            throw DaemonClientError.decodeFailed(error.localizedDescription)
+        }
     }
 
     func health() async throws -> Bool {

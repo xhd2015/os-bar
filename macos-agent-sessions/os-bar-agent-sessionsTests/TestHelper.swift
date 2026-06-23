@@ -147,6 +147,10 @@ struct Request: Codable {
     let is_baseline: Bool?
     let home: String?
     let cwd: String?
+    // --- help-open-logs test fields ---
+    let storage_path: String?
+    let seed_log_file: Bool?
+    let info_error: String?
 }
 
 // MARK: - JSON Response to test framework
@@ -175,6 +179,12 @@ struct Response: Codable {
     var user_info_dir: String = ""
     var opened_dir: String = ""
     var consumed_dir: String = ""
+    // --- help-open-logs response fields ---
+    var reveal_kind: String = ""
+    var reveal_path: String = ""
+    var select_root: String = ""
+    var menu_label: String = ""
+    var menu_enabled: Bool = false
 }
 
 // MARK: - ISO8601 Date Helpers
@@ -331,6 +341,43 @@ enum TestSessionNotificationLogic {
             return []
         }
         return path.split(separator: "/").map(String.init)
+    }
+}
+
+// MARK: - Help Open Logs Logic (mirrors production LogsFinderPlan + OpenLogsMenuState)
+
+struct TestLogsFinderPlanResult {
+    let revealKind: String
+    let revealPath: String
+    let selectRoot: String
+}
+
+enum TestLogsFinderPlan {
+    static let logFileName = "notify-logs.json"
+
+    static func plan(storagePath: String) -> TestLogsFinderPlanResult {
+        let logPath = (storagePath as NSString).appendingPathComponent(logFileName)
+        if FileManager.default.fileExists(atPath: logPath) {
+            return TestLogsFinderPlanResult(
+                revealKind: "file",
+                revealPath: logPath,
+                selectRoot: storagePath
+            )
+        }
+        return TestLogsFinderPlanResult(
+            revealKind: "directory",
+            revealPath: storagePath,
+            selectRoot: ""
+        )
+    }
+}
+
+enum TestOpenLogsMenuState {
+    static func menuState(infoError: String?) -> (label: String, enabled: Bool) {
+        if let infoError, !infoError.isEmpty {
+            return ("Open Logs (daemon unreachable)", false)
+        }
+        return ("Open Logs", true)
     }
 }
 
@@ -798,6 +845,36 @@ func runHelper() -> Never {
 
         response.opened_dir = dir
         response.consumed_dir = dir
+
+    case "logs_finder_plan":
+        guard let storagePath = request.storage_path, !storagePath.isEmpty else {
+            response.error = "missing storage_path for logs_finder_plan"
+            break
+        }
+
+        if request.seed_log_file == true {
+            let logPath = (storagePath as NSString).appendingPathComponent(TestLogsFinderPlan.logFileName)
+            do {
+                try FileManager.default.createDirectory(
+                    atPath: storagePath,
+                    withIntermediateDirectories: true
+                )
+                try Data("[]".utf8).write(to: URL(fileURLWithPath: logPath))
+            } catch {
+                response.error = "failed to seed log file: \(error.localizedDescription)"
+                break
+            }
+        }
+
+        let plan = TestLogsFinderPlan.plan(storagePath: storagePath)
+        response.reveal_kind = plan.revealKind
+        response.reveal_path = plan.revealPath
+        response.select_root = plan.selectRoot
+
+    case "open_logs_menu_state":
+        let state = TestOpenLogsMenuState.menuState(infoError: request.info_error)
+        response.menu_label = state.label
+        response.menu_enabled = state.enabled
 
     case "log_command_null_omit":
         guard let dir = request.log_dir else {

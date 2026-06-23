@@ -3,6 +3,36 @@ import SwiftUI
 import ServiceManagement
 
 @MainActor
+final class OpenLogsController: ObservableObject {
+    static let shared = OpenLogsController()
+
+    @Published private(set) var label = "Open Logs"
+    @Published private(set) var enabled = false
+
+    private init() {}
+
+    func refresh() async {
+        do {
+            _ = try await DaemonClient.shared.info()
+            apply(OpenLogsMenuState.menuState(infoError: nil))
+        } catch {
+            apply(OpenLogsMenuState.menuState(infoError: error.localizedDescription))
+        }
+    }
+
+    func performOpen() async {
+        await refresh()
+        guard enabled else { return }
+        await LogsFinderOpener.openLogs()
+    }
+
+    private func apply(_ state: OpenLogsMenuStateResult) {
+        label = state.label
+        enabled = state.enabled
+    }
+}
+
+@MainActor
 final class DaemonReadiness: ObservableObject {
     static let shared = DaemonReadiness()
 
@@ -227,6 +257,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 struct AgentSessionApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var store = SessionStore()
+    @ObservedObject private var openLogs = OpenLogsController.shared
     @AppStorage("autoStart") private var autoStart = false
 
     init() {
@@ -246,6 +277,14 @@ struct AgentSessionApp: App {
         }
         .windowResizability(.contentSize)
         .defaultLaunchBehavior(.suppressed)
+        .commands {
+            CommandGroup(after: .help) {
+                Button(openLogs.label) {
+                    Task { await openLogs.performOpen() }
+                }
+                .disabled(!openLogs.enabled)
+            }
+        }
 
         MenuBarExtra {
             VStack(alignment: .leading, spacing: 0) {
@@ -296,6 +335,13 @@ struct AgentSessionApp: App {
 
                 Divider()
 
+                Button(openLogs.label) {
+                    Task { await openLogs.performOpen() }
+                }
+                .disabled(!openLogs.enabled)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+
                 SettingsMenuButton(showIntegrationsSettings: showIntegrationsSettings)
 
                 Button("Quit") {
@@ -307,6 +353,15 @@ struct AgentSessionApp: App {
             .padding(.vertical, 4)
             .frame(minWidth: 220)
             .accessibilityIdentifier("menu-bar-extra")
+            .task {
+                while !DaemonReadiness.shared.isReady {
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                }
+                await openLogs.refresh()
+            }
+            .onAppear {
+                Task { await openLogs.refresh() }
+            }
         } label: {
             ZStack {
                 HStack(spacing: 2) {
