@@ -57,6 +57,14 @@ PLIST
 echo "==> Ad-hoc code signing"
 codesign --force --deep -s - "$BUNDLE_DIR" 2>/dev/null || true
 
+echo ""
+echo "==> App bundle ready: $BUNDLE_DIR"
+
+if [[ "${BUNDLE_SKIP_DMG:-}" == "1" ]]; then
+    echo "    (DMG skipped — set BUNDLE_SKIP_DMG=0 or unset to create $APP_NAME.dmg)"
+    exit 0
+fi
+
 DMG_PATH="$PROJECT_DIR/$APP_NAME.dmg"
 STAGING="$PROJECT_DIR/.dmg-staging"
 
