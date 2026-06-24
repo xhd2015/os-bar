@@ -153,6 +153,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Open Directory
 
+    private static let vscodeBundleID = "com.microsoft.VSCode"
+
+    private func activateVSCodeIfNeeded(exitCode: Int32) {
+        guard exitCode == 0 else { return }
+        NSRunningApplication
+            .runningApplications(withBundleIdentifier: Self.vscodeBundleID)
+            .first?
+            .activate(options: [.activateIgnoringOtherApps])
+    }
+
     /// Launch `/usr/local/bin/code <dir>`, show a loading cursor while running
     /// (auto-dismiss after 3 s), and log exit code / stdout / stderr.
     func openDir(_ dir: String) {
@@ -193,6 +203,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async {
                 timeoutWork.cancel()
                 self?.popLoadingCursor()
+                self?.activateVSCodeIfNeeded(exitCode: proc.terminationStatus)
 
                 let entry = NotifyLogEntry(
                     source: "log",
@@ -282,9 +293,7 @@ struct AgentSessionApp: App {
         appDelegate.store = store
         store.configureNotifications(appDelegate: appDelegate)
         // Sync toggle with actual system state
-        if #available(macOS 13.0, *) {
-            _autoStart.wrappedValue = SMAppService.mainApp.status == .enabled
-        }
+        _autoStart.wrappedValue = SMAppService.mainApp.status == .enabled
     }
 
     var body: some Scene {
@@ -422,17 +431,15 @@ private struct MenuBarDropdownContent: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .onChange(of: autoStart) { enabled in
-                    if #available(macOS 13.0, *) {
-                        do {
-                            if enabled {
-                                try SMAppService.mainApp.register()
-                            } else {
-                                try SMAppService.mainApp.unregister()
-                            }
-                        } catch {
-                            print("Auto Start toggle failed: \(error)")
-                            autoStart = !enabled
+                    do {
+                        if enabled {
+                            try SMAppService.mainApp.register()
+                        } else {
+                            try SMAppService.mainApp.unregister()
                         }
+                    } catch {
+                        print("Auto Start toggle failed: \(error)")
+                        autoStart = !enabled
                     }
                 }
 

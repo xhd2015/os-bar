@@ -1,5 +1,24 @@
 import Foundation
 
+private func makeFlexibleDateDecoder() -> JSONDecoder {
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .custom { decoder in
+        let container = try decoder.singleValueContainer()
+        let value = try container.decode(String.self)
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: value) {
+            return date
+        }
+        formatter.formatOptions = [.withInternetDateTime]
+        if let date = formatter.date(from: value) {
+            return date
+        }
+        throw DecodingError.dataCorruptedError(in: container, debugDescription: "invalid date: \(value)")
+    }
+    return decoder
+}
+
 struct DaemonInfo: Decodable {
     let storagePath: String
     let port: Int?
@@ -74,17 +93,13 @@ final class DaemonClient {
     func listEvents() async throws -> [SessionEvent] {
         let (data, response) = try await get(path: "/api/list")
         try ensureOK(response, data: data)
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .custom(decodeFlexibleDate)
-        return try decoder.decode([SessionEvent].self, from: data)
+        return try makeFlexibleDateDecoder().decode([SessionEvent].self, from: data)
     }
 
     func listLogs() async throws -> [NotifyLogEntry] {
         let (data, response) = try await get(path: "/api/logs")
         try ensureOK(response, data: data)
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .custom(decodeFlexibleDate)
-        return try decoder.decode([NotifyLogEntry].self, from: data)
+        return try makeFlexibleDateDecoder().decode([NotifyLogEntry].self, from: data)
     }
 
     func consume(dir: String) async throws {
@@ -181,18 +196,4 @@ final class DaemonClient {
         }
     }
 
-    private func decodeFlexibleDate(_ decoder: Decoder) throws -> Date {
-        let container = try decoder.singleValueContainer()
-        let value = try container.decode(String.self)
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = formatter.date(from: value) {
-            return date
-        }
-        formatter.formatOptions = [.withInternetDateTime]
-        if let date = formatter.date(from: value) {
-            return date
-        }
-        throw DecodingError.dataCorruptedError(in: container, debugDescription: "invalid date: \(value)")
-    }
 }
