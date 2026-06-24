@@ -119,7 +119,6 @@ enum SessionNotificationLogic {
 
 @MainActor
 final class SessionNotificationService: NSObject, UNUserNotificationCenterDelegate {
-    private weak var store: SessionStore?
     private weak var appDelegate: AppDelegate?
     private var isFirstPoll = true
     private var didRequestAuthorization = false
@@ -129,8 +128,7 @@ final class SessionNotificationService: NSObject, UNUserNotificationCenterDelega
         Bundle.main.bundleURL.pathExtension == "app"
     }
 
-    func configure(store: SessionStore, appDelegate: AppDelegate) {
-        self.store = store
+    func configure(appDelegate: AppDelegate) {
         self.appDelegate = appDelegate
         guard notificationsEnabled else { return }
         UNUserNotificationCenter.current().delegate = self
@@ -179,8 +177,7 @@ final class SessionNotificationService: NSObject, UNUserNotificationCenterDelega
     }
 
     func handleNotificationClick(dir: String) {
-        appDelegate?.openDir(dir)
-        store?.markConsumed(dir: dir)
+        appDelegate?.openSessionDir(dir)
     }
 
     nonisolated func userNotificationCenter(

@@ -10,7 +10,7 @@ class SessionStore: ObservableObject {
     private var pollTask: Task<Void, Never>?
 
     func configureNotifications(appDelegate: AppDelegate) {
-        notificationService.configure(store: self, appDelegate: appDelegate)
+        notificationService.configure(appDelegate: appDelegate)
     }
 
     init() {

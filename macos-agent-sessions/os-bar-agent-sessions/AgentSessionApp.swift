@@ -163,6 +163,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             .activate(options: [.activateIgnoringOtherApps])
     }
 
+    /// Open a session directory in VS Code and mark it consumed (menu + notification clicks).
+    @MainActor
+    func openSessionDir(_ dir: String) {
+        openDir(dir)
+        store?.markConsumed(dir: dir)
+    }
+
     /// Launch `/usr/local/bin/code <dir>`, show a loading cursor while running
     /// (auto-dismiss after 3 s), and log exit code / stdout / stderr.
     func openDir(_ dir: String) {
@@ -381,7 +388,7 @@ struct AgentSessionApp: App {
     }
 
     private func openInCode(_ dir: String) {
-        appDelegate.openDir(dir)
+        appDelegate.openSessionDir(dir)
     }
 }
 
@@ -406,7 +413,6 @@ private struct MenuBarDropdownContent: View {
                 ForEach(store.events) { event in
                     Button {
                         openInCode(event.dir)
-                        store.markConsumed(dir: event.dir)
                     } label: {
                         let time = store.relativeTime(for: event.timestamp)
                         Text(SessionMenuItemFormatter.displayLabel(
