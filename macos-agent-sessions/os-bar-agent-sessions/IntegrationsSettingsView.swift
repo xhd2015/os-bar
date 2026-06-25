@@ -5,6 +5,13 @@ struct IntegrationsSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            NotificationSettingsSection()
+
+            Divider()
+
+            Text("Integrations")
+                .font(.headline)
+
             if let error = viewModel.lastError {
                 Text(error)
                     .foregroundColor(.red)
@@ -23,7 +30,7 @@ struct IntegrationsSettingsView: View {
             }
         }
         .padding(16)
-        .frame(minWidth: 560, minHeight: 280)
+        .frame(minWidth: 560, minHeight: 360)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("integrations-window")
         .task {
@@ -34,6 +41,83 @@ struct IntegrationsSettingsView: View {
             }
             viewModel.refresh()
         }
+    }
+}
+
+private struct NotificationSettingsSection: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Notifications")
+                .font(.headline)
+
+            Text("macOS controls how long session alerts stay visible. Open this app's notification settings to choose a style:")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            NotificationStyleButton(
+                title: "Brief (Banner)",
+                detail: "Disappears automatically after a few seconds"
+            ) {
+                NotificationSettingsOpener.open()
+            }
+
+            NotificationStyleButton(
+                title: "Persistent (Alert)",
+                detail: "Stays on screen until you click — recommended for agent sessions",
+                recommended: true
+            ) {
+                NotificationSettingsOpener.open()
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("notification-settings-section")
+    }
+}
+
+private struct NotificationStyleButton: View {
+    let title: String
+    let detail: String
+    var recommended = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(title)
+                            .font(.body.weight(.medium))
+                        if recommended {
+                            Text("Recommended")
+                                .font(.caption2.weight(.semibold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.accentColor.opacity(0.15))
+                                .foregroundColor(.accentColor)
+                                .clipShape(Capsule())
+                        }
+                    }
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.leading)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "arrow.up.forward.app")
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.primary.opacity(0.04))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityIdentifier("notification-style-\(title.lowercased().replacingOccurrences(of: " ", with: "-"))")
+        .help("Open System Settings → Notifications for this app")
     }
 }
 
