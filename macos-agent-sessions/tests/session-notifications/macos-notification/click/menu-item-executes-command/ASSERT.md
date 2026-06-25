@@ -1,21 +1,20 @@
 ## Expected
 
 - `resp.Error == ""`.
-- `resp.AppActivated == true`.
-- `resp.WindowOpened == false`.
 - `resp.ExecutedCommand == "/usr/local/bin/code /proj/x"`.
+- `resp.AppActivated == false`.
+- `resp.WindowOpened == false`.
 - `resp.OpenedDir == "/proj/x"`.
 - `resp.ConsumedDir == "/proj/x"`.
 
 ## Side Effects
 
-- Test helper records activate-app-then-open+consume intent without launching real `code` binary or AppKit calls.
+- Test helper records command execution intent only; no real process launch.
 
 ## Errors
 
-- Missing app activation indicates notification click regressed to menu-bar behavior.
-- Window opened on notification click violates LSUIElement activation contract.
-- Mismatched opened/consumed dirs indicate broken click handler wiring.
+- App activation on menu click indicates incorrect source handling.
+- Missing or wrong command line indicates broken open-session wiring.
 
 ```go
 func Assert(t *testing.T, req *Request, resp *Response, err error) {
@@ -30,14 +29,14 @@ func Assert(t *testing.T, req *Request, resp *Response, err error) {
 	}
 	const dir = "/proj/x"
 	const wantCmd = "/usr/local/bin/code /proj/x"
-	if !resp.AppActivated {
-		t.Fatal("notification click must activate app before opening session")
-	}
-	if resp.WindowOpened {
-		t.Fatal("notification click must not open a new window")
-	}
 	if resp.ExecutedCommand != wantCmd {
 		t.Fatalf("expected executed_command %q, got %q", wantCmd, resp.ExecutedCommand)
+	}
+	if resp.AppActivated {
+		t.Fatal("menu item click must not activate app")
+	}
+	if resp.WindowOpened {
+		t.Fatal("menu item click must not open a window")
 	}
 	if resp.OpenedDir != dir {
 		t.Fatalf("expected opened_dir %q, got %q", dir, resp.OpenedDir)
@@ -45,6 +44,6 @@ func Assert(t *testing.T, req *Request, resp *Response, err error) {
 	if resp.ConsumedDir != dir {
 		t.Fatalf("expected consumed_dir %q, got %q", dir, resp.ConsumedDir)
 	}
-	t.Logf("opens-dir-and-consumes OK: activated=%v cmd=%s", resp.AppActivated, resp.ExecutedCommand)
+	t.Logf("menu-item-executes-command OK: cmd=%s", resp.ExecutedCommand)
 }
 ```

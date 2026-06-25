@@ -93,7 +93,8 @@ session-notifications/                   ROOT: Request{Action, Dir, ...}, Respon
     │   └── subtitle-absolute-parent/    LEAF: dir outside home/cwd → absolute parent
     │
     └── click/                           DECISION: click handler
-        └── opens-dir-and-consumes/      LEAF: simulate click userInfo → openDir + consume
+        ├── menu-item-executes-command/  LEAF: menu click → code command only
+        └── opens-dir-and-consumes/      LEAF: notification click → activate app + code command
 ```
 
 ## Parameter Ranking (macos-notification)
@@ -103,7 +104,7 @@ session-notifications/                   ROOT: Request{Action, Dir, ...}, Respon
 | 1 | Operation | `notification_diff`, `notification_content`, `notification_click` |
 | 2 | Diff transition | new, multiple-new, dedup-bump, unchanged, consumed-only, baseline |
 | 3 | Content context | basename only, home-tilde, cwd-relative, absolute parent |
-| 4 | Click input | userInfo dir → opened_dir + consumed_dir |
+| 4 | Click source | menu_bar → command only; notification → app_activated + command |
 
 ## Test Index
 
@@ -140,7 +141,8 @@ session-notifications/                   ROOT: Request{Action, Dir, ...}, Respon
 | 28 | `macos-notification/content/subtitle-home-tilde/` | Home-relative parent → `~/Projects` |
 | 29 | `macos-notification/content/subtitle-cwd-relative/` | Cwd-relative parent → `a` |
 | 30 | `macos-notification/content/subtitle-absolute-parent/` | Outside home/cwd → absolute parent |
-| 31 | `macos-notification/click/opens-dir-and-consumes/` | Click userInfo → open + consume recorded |
+| 31 | `macos-notification/click/menu-item-executes-command/` | Menu click → `code` command, no app activation |
+| 32 | `macos-notification/click/opens-dir-and-consumes/` | Notification click → activate app + `code` command |
 
 ## Coverage Map
 
@@ -246,8 +248,11 @@ type Response struct {
 	Body        string   `json:"body,omitempty"`
 	Subtitle    string   `json:"subtitle,omitempty"`
 	UserInfoDir string   `json:"user_info_dir,omitempty"`
-	OpenedDir   string   `json:"opened_dir,omitempty"`
-	ConsumedDir string   `json:"consumed_dir,omitempty"`
+	OpenedDir        string `json:"opened_dir,omitempty"`
+	ConsumedDir      string `json:"consumed_dir,omitempty"`
+	ExecutedCommand  string `json:"executed_command,omitempty"`
+	AppActivated     bool   `json:"app_activated,omitempty"`
+	WindowOpened     bool   `json:"window_opened,omitempty"`
 }
 
 func Run(t *testing.T, req *Request) (*Response, error) {

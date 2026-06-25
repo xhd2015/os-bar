@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import UserNotifications
 
@@ -177,7 +178,14 @@ final class SessionNotificationService: NSObject, UNUserNotificationCenterDelega
     }
 
     func handleNotificationClick(dir: String) {
-        appDelegate?.openSessionDir(dir)
+        SessionClickHandler.handleClick(
+            dir: dir,
+            source: .notification,
+            activateApp: { NSApp.activate(ignoringOtherApps: true) },
+            openSessionDir: { [weak self] dir in
+                self?.appDelegate?.openSessionDir(dir)
+            }
+        )
     }
 
     nonisolated func userNotificationCenter(

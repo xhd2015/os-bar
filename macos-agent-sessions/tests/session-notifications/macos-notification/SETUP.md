@@ -28,7 +28,7 @@ notification delegate click -> openDir(dir) + markConsumed(dir)
 
 ## Context
 
-- Actions: `"notification_diff"`, `"notification_content"`, `"notification_click"`.
+- Actions: `"notification_diff"`, `"notification_content"`, `"menu_item_click"`, `"notification_click"`.
 - `previous_json` and `current_json` are JSON arrays of session events.
 - `home` and `cwd` optional for subtitle path shortening in content tests.
 

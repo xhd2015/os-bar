@@ -38,7 +38,7 @@ doctest -> notification_diff | notification_content | notification_click -> noti
 - Store actions: `"add_event"`, `"add_events_batch"`, `"prune"`, `"mark_consumed"`, `"unconsumed_count"`, `"relative_time"`.
 - Server action: `"server_post"` — embedded HTTP server with ephemeral port (not 38271).
 - Command-log actions: `"log_command_roundtrip"`, `"log_command_null_omit"`.
-- Notification actions: `"notification_diff"`, `"notification_content"`, `"notification_click"`.
+- Notification actions: `"notification_diff"`, `"notification_content"`, `"menu_item_click"`, `"notification_click"`.
 - All timestamps in events are ISO8601 strings (`"2006-01-02T15:04:05Z"`).
 - `previous_json` / `current_json` are JSON arrays of `SessionEvent` for diff tests.
 - `is_baseline=true` on first poll seeds baseline without notifying.

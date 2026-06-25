@@ -4,7 +4,7 @@
 
 ```
 # simulate click with userInfo dir=/proj/x
-notification_click(/proj/x) -> opened_dir=/proj/x, consumed_dir=/proj/x
+notification_click(/proj/x) -> app_activated=true, window_opened=false, executed_command, opened_dir, consumed_dir
 ```
 
 ## Steps
@@ -14,6 +14,7 @@ notification_click(/proj/x) -> opened_dir=/proj/x, consumed_dir=/proj/x
 
 ```go
 func Setup(t *testing.T, req *Request) error {
+	req.Action = "notification_click"
 	req.Dir = "/proj/x"
 	return nil
 }

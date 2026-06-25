@@ -217,6 +217,9 @@ struct Response: Codable {
     var user_info_dir: String = ""
     var opened_dir: String = ""
     var consumed_dir: String = ""
+    var executed_command: String = ""
+    var app_activated: Bool = false
+    var window_opened: Bool = false
     // --- help-open-logs response fields ---
     var reveal_kind: String = ""
     var reveal_path: String = ""
@@ -394,6 +397,70 @@ enum TestSessionNotificationLogic {
         }
         return path.split(separator: "/").map(String.init)
     }
+}
+
+// MARK: - Session Click Logic (mirrors production SessionClickHandler + SessionDirCommand)
+
+enum SessionClickSource: Equatable {
+    case menuBar
+    case notification
+}
+
+enum SessionDirCommand {
+    static let binary = "/usr/local/bin/code"
+
+    static func line(for dir: String) -> String {
+        "\(binary) \(dir)"
+    }
+}
+
+enum TestSessionClickHandler {
+    struct ClickResult {
+        let appActivated: Bool
+        let windowOpened: Bool
+        let executedCommand: String
+        let openedDir: String
+        let consumedDir: String
+    }
+
+    static func handleClick(
+        dir: String,
+        source: SessionClickSource,
+        activateApp: () -> Void,
+        openSessionDir: (String) -> Void
+    ) {
+        if source == .notification {
+            activateApp()
+        }
+        openSessionDir(dir)
+    }
+
+    static func simulateClick(dir: String, source: SessionClickSource) -> ClickResult {
+        var appActivated = false
+
+        handleClick(
+            dir: dir,
+            source: source,
+            activateApp: { appActivated = true },
+            openSessionDir: { _ in }
+        )
+
+        return ClickResult(
+            appActivated: appActivated,
+            windowOpened: false,
+            executedCommand: SessionDirCommand.line(for: dir),
+            openedDir: dir,
+            consumedDir: dir
+        )
+    }
+}
+
+func applySessionClickResult(_ result: TestSessionClickHandler.ClickResult, to response: inout Response) {
+    response.executed_command = result.executedCommand
+    response.app_activated = result.appActivated
+    response.window_opened = result.windowOpened
+    response.opened_dir = result.openedDir
+    response.consumed_dir = result.consumedDir
 }
 
 // MARK: - Help Open Logs Logic (mirrors production LogsFinderPlan + OpenLogsMenuState)
@@ -1050,14 +1117,27 @@ func runHelper() -> Never {
         response.subtitle = content.subtitle
         response.user_info_dir = content.userInfoDir
 
+    case "menu_item_click":
+        guard let dir = request.dir else {
+            response.error = "missing dir for menu_item_click"
+            break
+        }
+
+        applySessionClickResult(
+            TestSessionClickHandler.simulateClick(dir: dir, source: .menuBar),
+            to: &response
+        )
+
     case "notification_click":
         guard let dir = request.dir else {
             response.error = "missing dir for notification_click"
             break
         }
 
-        response.opened_dir = dir
-        response.consumed_dir = dir
+        applySessionClickResult(
+            TestSessionClickHandler.simulateClick(dir: dir, source: .notification),
+            to: &response
+        )
 
     case "logs_finder_plan":
         guard let storagePath = request.storage_path, !storagePath.isEmpty else {

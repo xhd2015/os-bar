@@ -177,7 +177,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let startTime = Date()
         let process = Process()
-        process.launchPath = "/usr/local/bin/code"
+        process.launchPath = SessionDirCommand.binary
         process.arguments = [dir]
 
         let stdoutPipe = Pipe()
@@ -220,7 +220,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     pi: nil,
                     opencode: nil,
                     command: NotifyLogEntry.CommandLogDetails(
-                        command: "/usr/local/bin/code \(dir)",
+                        command: SessionDirCommand.line(for: dir),
                         exitCode: proc.terminationStatus,
                         stdout: stdout.trimmingCharacters(in: .whitespacesAndNewlines),
                         stderr: stderr.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -248,7 +248,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     pi: nil,
                     opencode: nil,
                     command: NotifyLogEntry.CommandLogDetails(
-                        command: "/usr/local/bin/code \(dir)",
+                        command: SessionDirCommand.line(for: dir),
                         exitCode: -1,
                         stdout: "",
                         stderr: "failed to launch: \(error.localizedDescription)",
@@ -388,7 +388,12 @@ struct AgentSessionApp: App {
     }
 
     private func openInCode(_ dir: String) {
-        appDelegate.openSessionDir(dir)
+        SessionClickHandler.handleClick(
+            dir: dir,
+            source: .menuBar,
+            activateApp: {},
+            openSessionDir: { appDelegate.openSessionDir($0) }
+        )
     }
 }
 

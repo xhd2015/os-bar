@@ -1,27 +1,28 @@
 # Scenario
 
-**Feature**: notification click opens directory and marks event consumed
+**Feature**: session click handlers (menu bar vs notification)
 
 ```
-# default action click reads userInfo["dir"]
-notification click userInfo -> openDir(dir) + markConsumed(dir) -> opened_dir, consumed_dir
+# menu item: execute code <dir> only
+menu_item_click(dir) -> executed_command, app_activated=false, window_opened=false
+
+# notification: activate app first (no window), then execute code <dir>
+notification_click(dir) -> app_activated=true, window_opened=false, executed_command, opened_dir, consumed_dir
 ```
 
 ## Preconditions
 
-- Click handler mirrors menu bar item behavior without launching real `code` binary.
+- Click handlers mirror `SessionClickHandler` with mocked `activateApp` and `openSessionDir`.
+- No real `code` binary launch; no AppKit calls.
 
 ## Steps
 
-- Leaf sets `action: "notification_click"` with target `dir`.
-
-## Context
-
-- Both `opened_dir` and `consumed_dir` must equal the clicked dir.
+- Menu leaf sets `action: "menu_item_click"` with target `dir`.
+- Notification leaf sets `action: "notification_click"` with target `dir`.
 
 ```go
 func Setup(t *testing.T, req *Request) error {
-	req.Action = "notification_click"
+	t.Logf("session click: grouping menu_item_click and notification_click leaves")
 	return nil
 }
 ```
