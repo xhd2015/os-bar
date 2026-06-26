@@ -4,7 +4,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-APP_NAME="os-bar-agent-sessions"
+APP_NAME="${APP_NAME:-os-bar-agent-sessions}"
+BUNDLE_ID="${BUNDLE_ID:-com.os-bar.agent-sessions}"
+SWIFT_BUILD_CONFIG="${SWIFT_BUILD_CONFIG:-release}"
+SWIFT_EXECUTABLE="${SWIFT_EXECUTABLE:-os-bar-agent-sessions}"
 BUNDLE_DIR="$PROJECT_DIR/$APP_NAME.app"
 CONTENTS="$BUNDLE_DIR/Contents"
 MACOS_BIN="$CONTENTS/MacOS"
@@ -14,16 +17,16 @@ echo "==> Building agent-sessions CLI"
 cd "$PROJECT_DIR/go-pkgs/cmd/agent-sessions"
 go build -o "$PROJECT_DIR/.build/agent-sessions" .
 
-echo "==> Building $APP_NAME (release)"
+echo "==> Building $APP_NAME ($SWIFT_BUILD_CONFIG, bundle: $BUNDLE_ID)"
 cd "$PROJECT_DIR"
-swift build -c release
+swift build -c "$SWIFT_BUILD_CONFIG"
 
 echo "==> Creating .app bundle at $BUNDLE_DIR"
 rm -rf "$BUNDLE_DIR"
 mkdir -p "$MACOS_BIN" "$RESOURCES"
 
-BIN_PATH="$(swift build -c release --show-bin-path)/$APP_NAME"
-cp "$BIN_PATH" "$MACOS_BIN/"
+BIN_PATH="$(swift build -c "$SWIFT_BUILD_CONFIG" --show-bin-path)/$SWIFT_EXECUTABLE"
+cp "$BIN_PATH" "$MACOS_BIN/$SWIFT_EXECUTABLE"
 cp "$PROJECT_DIR/.build/agent-sessions" "$MACOS_BIN/agent-sessions"
 chmod +x "$MACOS_BIN/agent-sessions"
 
@@ -33,9 +36,9 @@ cat > "$CONTENTS/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>$APP_NAME</string>
+    <string>$SWIFT_EXECUTABLE</string>
     <key>CFBundleIdentifier</key>
-    <string>com.os-bar.agent-sessions</string>
+    <string>$BUNDLE_ID</string>
     <key>CFBundleName</key>
     <string>$APP_NAME</string>
     <key>CFBundleVersion</key>

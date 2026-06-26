@@ -51,18 +51,15 @@ enum DaemonClientError: LocalizedError {
 final class DaemonClient {
     static let shared = DaemonClient()
 
-    let port: Int
+    var port: Int {
+        explicitPort ?? AgentSessionsDaemonConfig.resolvedPort
+    }
+
+    private let explicitPort: Int?
     private let session: URLSession
 
     init(port: Int? = nil, session: URLSession = .shared) {
-        if let port {
-            self.port = port
-        } else if let envPort = ProcessInfo.processInfo.environment["AGENT_SESSIONS_PORT"],
-                  let parsed = Int(envPort) {
-            self.port = parsed
-        } else {
-            self.port = 38271
-        }
+        self.explicitPort = port
         self.session = session
     }
 

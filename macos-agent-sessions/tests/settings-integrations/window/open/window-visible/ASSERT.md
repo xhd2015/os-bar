@@ -1,3 +1,8 @@
+---
+label: ui-automation, slow, requires-accessibility
+explanation: Opens Integrations window via -uiTestingOpenSettings and verifies integrations-window plus four row AX identifiers.
+---
+
 ## Expected
 - `resp.WindowOpen == true`.
 - `resp.Layout` contains identifier `integrations-window`.

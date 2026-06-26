@@ -1,3 +1,8 @@
+---
+label: ui-automation, slow, requires-accessibility
+explanation: Dumps AX layout for empty fakeHome and verifies Missing badges and Install buttons on all four integration rows.
+---
+
 ## Expected
 - For each integration status identifier (`integration-*-status`): `Title == "Missing"`.
 - For each install identifier (`integration-*-install`): node exists with `Role == "AXButton"`.

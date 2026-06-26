@@ -1,3 +1,8 @@
+---
+label: ui-automation, slow, requires-accessibility
+explanation: AX-clicks opencode Install button and verifies status Missing to Up to date plus plugin under fakeHome/.config/opencode/.
+---
+
 ## Expected
 - `resp.ClickOK == true` for opencode install click.
 - `layout_before`: `integration-opencode-status` title `Missing`; `integration-opencode-install` present.

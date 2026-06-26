@@ -171,6 +171,10 @@ struct Request: Codable {
     let poll_sequence: [PollStepInput]?
     // --- session menu item test fields ---
     let consumed: Bool?
+    // --- vscode window focus click test fields ---
+    let click_source: String?
+    let vscode_frontmost_dir: String?
+    let vscode_open_dirs: [String]?
     // --- daemon quit test fields ---
     let spawned_pid: Int?
     let spawned_running: Bool?
@@ -235,6 +239,9 @@ struct Response: Codable {
     // --- session menu item response fields ---
     var display_label: String = ""
     var menu_tooltip: String = ""
+    // --- vscode window focus click response fields ---
+    var focused_vscode_dir: String = ""
+    var menu_focused_vscode_dir: String = ""
     // --- daemon quit response fields ---
     var quit_target_kind: String = ""
     var quit_target_pid: Int = 0
@@ -461,6 +468,69 @@ func applySessionClickResult(_ result: TestSessionClickHandler.ClickResult, to r
     response.window_opened = result.windowOpened
     response.opened_dir = result.openedDir
     response.consumed_dir = result.consumedDir
+}
+
+// MARK: - VS Code Window Focus (mirrors AppDelegate.openDir + activateVSCodeIfNeeded)
+
+/// Simulates VS Code with multiple workspace windows. `code <dir>` focuses the
+/// matching window, then `activateVSCodeIfNeeded` brings VS Code forward.
+/// Notification clicks must not call `NSApp.activate` first — that foregrounds the
+/// menu-bar agent and causes the post-exit VS Code activation to restore a stale window.
+enum TestVSCodeFocusSimulator {
+    struct Environment {
+        var openDirs: [String]
+        var frontmostDir: String
+    }
+
+    struct FocusResult {
+        let focusedDir: String
+        let executedCommand: String
+        let appActivated: Bool
+        let openedDir: String
+        let consumedDir: String
+    }
+
+    static func simulateOpenSession(
+        targetDir: String,
+        source: SessionClickSource,
+        environment: Environment
+    ) -> FocusResult {
+        var env = environment
+        var appActivated = false
+
+        TestSessionClickHandler.handleClick(
+            dir: targetDir,
+            source: source,
+            activateApp: {
+                appActivated = true
+            },
+            openSessionDir: { dir in
+                env.openDirs = normalizedUniqueDirs(env.openDirs + [dir])
+                env.frontmostDir = dir
+                // Mirrors activateVSCodeIfNeeded after successful `code` exit.
+            }
+        )
+
+        return FocusResult(
+            focusedDir: env.frontmostDir,
+            executedCommand: SessionDirCommand.line(for: targetDir),
+            appActivated: appActivated,
+            openedDir: targetDir,
+            consumedDir: targetDir
+        )
+    }
+
+    private static func normalizedUniqueDirs(_ dirs: [String]) -> [String] {
+        var seen = Set<String>()
+        var ordered: [String] = []
+        for dir in dirs {
+            let canonical = normalizeDir(dir)
+            if seen.insert(canonical).inserted {
+                ordered.append(canonical)
+            }
+        }
+        return ordered
+    }
 }
 
 // MARK: - Help Open Logs Logic (mirrors production LogsFinderPlan + OpenLogsMenuState)
@@ -1138,6 +1208,84 @@ func runHelper() -> Never {
             TestSessionClickHandler.simulateClick(dir: dir, source: .notification),
             to: &response
         )
+
+    case "vscode_focus_click":
+        guard let dir = request.dir else {
+            response.error = "missing dir for vscode_focus_click"
+            break
+        }
+        guard let frontmost = request.vscode_frontmost_dir else {
+            response.error = "missing vscode_frontmost_dir for vscode_focus_click"
+            break
+        }
+        guard let openDirs = request.vscode_open_dirs, !openDirs.isEmpty else {
+            response.error = "missing vscode_open_dirs for vscode_focus_click"
+            break
+        }
+
+        let source: SessionClickSource?
+        switch request.click_source ?? "notification" {
+        case "menu", "menu_bar", "menu_item":
+            source = .menuBar
+        case "notification":
+            source = .notification
+        default:
+            source = nil
+        }
+        guard let source else {
+            response.error = "unknown click_source for vscode_focus_click: \(request.click_source ?? "")"
+            break
+        }
+
+        let env = TestVSCodeFocusSimulator.Environment(
+            openDirs: openDirs,
+            frontmostDir: frontmost
+        )
+        let result = TestVSCodeFocusSimulator.simulateOpenSession(
+            targetDir: dir,
+            source: source,
+            environment: env
+        )
+        response.focused_vscode_dir = result.focusedDir
+        response.executed_command = result.executedCommand
+        response.app_activated = result.appActivated
+        response.opened_dir = result.openedDir
+        response.consumed_dir = result.consumedDir
+
+    case "vscode_focus_parity":
+        guard let dir = request.dir else {
+            response.error = "missing dir for vscode_focus_parity"
+            break
+        }
+        guard let frontmost = request.vscode_frontmost_dir else {
+            response.error = "missing vscode_frontmost_dir for vscode_focus_parity"
+            break
+        }
+        guard let openDirs = request.vscode_open_dirs, !openDirs.isEmpty else {
+            response.error = "missing vscode_open_dirs for vscode_focus_parity"
+            break
+        }
+
+        let env = TestVSCodeFocusSimulator.Environment(
+            openDirs: openDirs,
+            frontmostDir: frontmost
+        )
+        let menuResult = TestVSCodeFocusSimulator.simulateOpenSession(
+            targetDir: dir,
+            source: .menuBar,
+            environment: env
+        )
+        let notificationResult = TestVSCodeFocusSimulator.simulateOpenSession(
+            targetDir: dir,
+            source: .notification,
+            environment: env
+        )
+        response.menu_focused_vscode_dir = menuResult.focusedDir
+        response.focused_vscode_dir = notificationResult.focusedDir
+        response.executed_command = notificationResult.executedCommand
+        response.app_activated = notificationResult.appActivated
+        response.opened_dir = notificationResult.openedDir
+        response.consumed_dir = notificationResult.consumedDir
 
     case "logs_finder_plan":
         guard let storagePath = request.storage_path, !storagePath.isEmpty else {

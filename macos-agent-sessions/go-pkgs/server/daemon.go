@@ -99,9 +99,12 @@ func (d *daemon) run() error {
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 	<-sigCh
 
+	// Remove pid file before graceful shutdown so quit targets and health
+	// checks do not observe a live pid after the process begins stopping.
+	_ = os.Remove(pidPath)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	_ = httpServer.Shutdown(ctx)
-	_ = os.Remove(pidPath)
 	return nil
 }

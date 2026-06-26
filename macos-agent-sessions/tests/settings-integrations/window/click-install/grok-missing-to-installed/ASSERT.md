@@ -1,3 +1,8 @@
+---
+label: ui-automation, slow, requires-accessibility
+explanation: AX-clicks grok Install button and verifies status Missing to Up to date plus hook files under fakeHome/.grok/.
+---
+
 ## Expected
 - `resp.ClickOK == true` for grok install click.
 - `layout_before`: `integration-grok-status` title `Missing`; `integration-grok-install` present.

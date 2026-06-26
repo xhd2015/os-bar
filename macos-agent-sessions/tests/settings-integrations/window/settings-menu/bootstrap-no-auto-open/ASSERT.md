@@ -1,3 +1,8 @@
+---
+label: ui-automation, slow, requires-accessibility
+explanation: Normal app launch without -uiTestingOpenSettings; verifies Integrations window stays closed on bootstrap.
+---
+
 ## Expected
 - `resp.WindowVisible == false`.
 - `resp.WindowOpen == false`.

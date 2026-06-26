@@ -1,3 +1,8 @@
+---
+label: ui-automation, slow, requires-accessibility
+explanation: Menu-bar Settings click opens Integrations window when closed; verifies integrations-window and four row AX identifiers.
+---
+
 ## Expected
 - `resp.WindowOpen == true`.
 - `resp.Layout` contains identifier `integrations-window`.

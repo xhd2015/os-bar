@@ -39,6 +39,11 @@ struct Request: Codable {
     var global: Bool?
     var wait_ms: Int?
     var sequence: [Request]?
+    var notify_dir: String?
+    var notification_title: String?
+    var log_capture_seconds: Int?
+    var manual_click_wait_seconds: Int?
+    var state_dir: String?
 }
 
 struct Response: Codable {
@@ -55,6 +60,26 @@ struct Response: Codable {
     var home_dir: String = ""
     var work_dir: String = ""
     var error: String = ""
+    var notification_posted: Bool = false
+    var notification_clicked: Bool = false
+    var log_lines: [String] = []
+    var notification_click_log_lines: [String] = []
+    var vscode_log_lines: [String] = []
+    var app_log_path: String = ""
+    var app_log_lines: [String] = []
+    var notification_authorized: Bool = false
+    var notification_auth_status: String = ""
+    var notification_bundle_id: String = ""
+    var daemon_port: Int = 0
+    var daemon_event_count: Int = 0
+    var daemon_has_notify_event: Bool = false
+    var app_saw_notification_posted: Bool = false
+    var first_notification_clicked: Bool = false
+    var second_notification_clicked: Bool = false
+    var user_confirmed_window_opened: Bool = false
+    var user_confirmed_desktop_ready: Bool = false
+    var user_confirmed_correct_window: Bool = false
+    var human_assisted_passed: Bool = false
 }
 
 final class UIAutomationSession {
@@ -70,6 +95,9 @@ final class UIAutomationSession {
     private var cliPath = ""
     private var daemonPort = 0
     private var stateDir = ""
+    private var useAppBundle = false
+    private var captureAppOutput = false
+    private var appLogPath = ""
 
     private init() {}
 
@@ -77,10 +105,13 @@ final class UIAutomationSession {
         dumpCount = 0
     }
 
-    func configure(homeDir: String, workDir: String) throws {
+    func configure(homeDir: String, workDir: String, stateDir: String? = nil) throws {
         projectRoot = try Self.findProjectRoot()
         cliPath = try Self.buildCLI(projectRoot: projectRoot)
         daemonPort = try Self.pickEphemeralPort()
+        if let stateDir, !stateDir.isEmpty {
+            self.stateDir = stateDir
+        }
         _ = homeDir
         _ = workDir
     }
@@ -98,11 +129,22 @@ final class UIAutomationSession {
         throw AutomationError.timeout("Integrations window did not become ready within 15s")
     }
 
+    func configureNotificationUITest(homeDir: String, stateDir: String?, captureAppOutput: Bool) {
+        useAppBundle = true
+        self.captureAppOutput = captureAppOutput
+        if let stateDir, !stateDir.isEmpty {
+            appLogPath = (stateDir as NSString).appendingPathComponent("notification-click-ui.log")
+        } else {
+            appLogPath = (homeDir as NSString).appendingPathComponent(".os-bar/notification-click-ui.log")
+        }
+    }
+
     func launchApp(homeDir: String) throws {
         try launchApp(homeDir: homeDir, uiTestingOpenSettings: false)
         let deadline = Date().addingTimeInterval(15)
         while Date() < deadline {
-            if appProcess?.isRunning == true, try daemonHealthy() {
+            let appRunning = appProcess?.isRunning == true || appPID > 0
+            if appRunning, try daemonHealthy() {
                 usleep(500_000)
                 return
             }
@@ -119,8 +161,28 @@ final class UIAutomationSession {
         if daemonPort == 0 {
             daemonPort = (try? Self.pickEphemeralPort()) ?? 38272
         }
-        stateDir = (homeDir as NSString).appendingPathComponent(".os-bar/agent-sessions")
+        if stateDir.isEmpty {
+            stateDir = (homeDir as NSString).appendingPathComponent(".os-bar/agent-sessions")
+        }
         try ensureDaemonRunning(homeDir: homeDir)
+
+        var env = ProcessInfo.processInfo.environment
+        env["HOME"] = homeDir
+        env["AGENT_SESSIONS_CLI"] = cliPath
+        env["AGENT_SESSIONS_PORT"] = String(daemonPort)
+        env["AGENT_SESSIONS_STATE_DIR"] = stateDir
+        if captureAppOutput {
+            env["AGENT_SESSIONS_NOTIFICATION_DEBUG_LOG"] = appLogPath
+        }
+        let cliDir = (cliPath as NSString).deletingLastPathComponent
+        env["PATH"] = "\(cliDir):" + (env["PATH"] ?? "")
+
+        if useAppBundle {
+            let bundlePath = try Self.resolveNotificationAppBundle(projectRoot: projectRoot)
+            try launchAppBundle(path: bundlePath, env: env)
+            integrationsWindow = nil
+            return
+        }
 
         let appPath = try Self.buildApp(projectRoot: projectRoot)
         let process = Process()
@@ -128,14 +190,6 @@ final class UIAutomationSession {
         if uiTestingOpenSettings {
             process.arguments = ["-uiTestingOpenSettings"]
         }
-
-        var env = ProcessInfo.processInfo.environment
-        env["HOME"] = homeDir
-        env["AGENT_SESSIONS_CLI"] = cliPath
-        env["AGENT_SESSIONS_PORT"] = String(daemonPort)
-        env["AGENT_SESSIONS_STATE_DIR"] = stateDir
-        let cliDir = (cliPath as NSString).deletingLastPathComponent
-        env["PATH"] = "\(cliDir):" + (env["PATH"] ?? "")
         process.environment = env
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
@@ -144,6 +198,37 @@ final class UIAutomationSession {
         appProcess = process
         appPID = process.processIdentifier
         integrationsWindow = nil
+    }
+
+    private func launchAppBundle(path: String, env: [String: String]) throws {
+        if captureAppOutput {
+            try? FileManager.default.createDirectory(
+                atPath: (appLogPath as NSString).deletingLastPathComponent,
+                withIntermediateDirectories: true
+            )
+            FileManager.default.createFile(atPath: appLogPath, contents: nil)
+        }
+
+        // Quit any running menu-bar instance first. NSWorkspace env injection is unreliable
+        // when an instance is already connected to the production daemon (port 38271).
+        Self.quitExistingAgentSessionsApps()
+
+        let executable = (path as NSString).appendingPathComponent("Contents/MacOS/os-bar-agent-sessions")
+        guard FileManager.default.fileExists(atPath: executable) else {
+            throw AutomationError.setup("bundle executable not found: \(executable)")
+        }
+
+        fputs("Launching bundle executable with AGENT_SESSIONS_PORT=\(env["AGENT_SESSIONS_PORT"] ?? "?") HOME=\(env["HOME"] ?? "?")\n", stderr)
+        fflush(stderr)
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.environment = env
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        appProcess = process
+        appPID = process.processIdentifier
     }
 
     func clickSettingsMenu() throws {
@@ -377,6 +462,11 @@ final class UIAutomationSession {
                 }
                 process.waitUntilExit()
             }
+        } else if appPID > 0 {
+            Self.killChildProcesses(of: appPID)
+            Self.signalPID(appPID, sig: SIGTERM)
+            usleep(100_000)
+            Self.signalPID(appPID, sig: SIGKILL)
         }
         if let process = daemonProcess {
             let pid = process.processIdentifier
@@ -404,6 +494,384 @@ final class UIAutomationSession {
         dumpCount = 0
         daemonPort = 0
         stateDir = ""
+        useAppBundle = false
+        captureAppOutput = false
+        appLogPath = ""
+    }
+
+    var capturedAppLogPath: String { appLogPath }
+    var configuredDaemonPort: Int { daemonPort }
+
+    func fetchDaemonEventSnapshot() throws -> (count: Int, dirs: [String]) {
+        guard daemonPort > 0 else {
+            throw AutomationError.setup("daemon port not configured")
+        }
+        let url = URL(string: "http://127.0.0.1:\(daemonPort)/api/list")!
+        var request = URLRequest(url: url, timeoutInterval: 2)
+        let semaphore = DispatchSemaphore(value: 0)
+        var statusCode = 0
+        var body = ""
+        var requestError: Error?
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            defer { semaphore.signal() }
+            if let error {
+                requestError = error
+                return
+            }
+            if let http = response as? HTTPURLResponse {
+                statusCode = http.statusCode
+            }
+            if let data, let text = String(data: data, encoding: .utf8) {
+                body = text
+            }
+        }.resume()
+        _ = semaphore.wait(timeout: .now() + 5)
+        if let requestError {
+            throw AutomationError.setup("daemon list failed: \(requestError.localizedDescription)")
+        }
+        guard statusCode == 200 else {
+            throw AutomationError.setup("daemon list HTTP \(statusCode): \(body)")
+        }
+        guard let data = body.data(using: .utf8),
+              let events = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
+        else {
+            throw AutomationError.setup("daemon list decode failed: \(body)")
+        }
+        let dirs = events.compactMap { $0["dir"] as? String }
+        return (events.count, dirs)
+    }
+
+    func waitForAppNotificationPosted(timeout: TimeInterval) -> Bool {
+        let markers = ["notification_posted", "handle_refresh_notify_"]
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let lines = readCapturedAppLog()
+            if lines.contains(where: { line in
+                markers.contains(where: { line.contains($0) })
+            }) {
+                return true
+            }
+            usleep(500_000)
+        }
+        return false
+    }
+
+    func postSessionNotify(dir: String) throws {
+        guard daemonPort > 0 else {
+            throw AutomationError.setup("daemon port not configured")
+        }
+        let url = URL(string: "http://127.0.0.1:\(daemonPort)/api/notify")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "dir": dir,
+            "source": "notify",
+        ])
+
+        let semaphore = DispatchSemaphore(value: 0)
+        var statusCode = 0
+        var responseBody = ""
+        var requestError: Error?
+
+        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+            defer { semaphore.signal() }
+            if let error {
+                requestError = error
+                return
+            }
+            if let http = response as? HTTPURLResponse {
+                statusCode = http.statusCode
+            }
+            if let data, let body = String(data: data, encoding: .utf8) {
+                responseBody = body
+            }
+        }
+        task.resume()
+        _ = semaphore.wait(timeout: .now() + 10)
+
+        if let requestError {
+            throw AutomationError.setup("post notify failed: \(requestError.localizedDescription)")
+        }
+        guard statusCode == 200 else {
+            throw AutomationError.setup("post notify HTTP \(statusCode): \(responseBody)")
+        }
+    }
+
+    func clickSessionNotification(title: String, timeout: TimeInterval) throws -> (clicked: Bool, x: Double, y: Double) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let (element, point) = try findNotificationClickTarget(title: title) {
+                var clicked = false
+                if AXUIElementPerformAction(element, kAXPressAction as CFString) == .success {
+                    clicked = true
+                }
+                if point != .zero {
+                    clickAtGlobalScreenPoint(point)
+                    clicked = true
+                }
+                if clicked {
+                    return (true, Double(point.x), Double(point.y))
+                }
+            }
+            usleep(250_000)
+        }
+        return (false, 0, 0)
+    }
+
+    func captureNotificationClickLogs(seconds: Int) throws -> [String] {
+        let window = min(max(seconds, 5), 30)
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/log")
+        proc.arguments = [
+            "show",
+            "--last", "\(window)s",
+            "--style", "compact",
+            "--predicate", "eventMessage CONTAINS \"[NotificationClick]\" OR eventMessage CONTAINS \"vscode_activation\"",
+        ]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = pipe
+        try proc.run()
+
+        let deadline = Date().addingTimeInterval(15)
+        while proc.isRunning, Date() < deadline {
+            usleep(100_000)
+        }
+        if proc.isRunning {
+            proc.terminate()
+            usleep(50_000)
+            if proc.isRunning {
+                kill(proc.processIdentifier, SIGKILL)
+            }
+        }
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let text = String(data: data, encoding: .utf8) ?? ""
+        return text
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    func waitForNotificationAuthStatus(timeout: TimeInterval) -> (authorized: Bool, status: String, bundleID: String) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let lines = readCapturedAppLog()
+            let auth = parseNotificationAuth(from: lines)
+            if !auth.status.isEmpty {
+                return auth
+            }
+            usleep(500_000)
+        }
+        return parseNotificationAuth(from: readCapturedAppLog())
+    }
+
+    func parseNotificationAuth(from lines: [String]) -> (authorized: Bool, status: String, bundleID: String) {
+        var status = ""
+        var bundleID = ""
+        for line in lines.reversed() {
+            if status.isEmpty, line.contains("notification_diagnostics"), line.contains("authorization=") {
+                if let range = line.range(of: "authorization=") {
+                    let tail = line[range.upperBound...]
+                    status = tail.split(separator: " ").first.map(String.init) ?? ""
+                }
+            }
+            if bundleID.isEmpty, line.contains("bundle_id=") {
+                if let range = line.range(of: "bundle_id=") {
+                    let tail = line[range.upperBound...]
+                    bundleID = tail.split(separator: " ").first.map(String.init) ?? ""
+                }
+            }
+        }
+        let authorized = status == "authorized" || status == "provisional" || status == "ephemeral"
+        return (authorized, status, bundleID)
+    }
+
+    func readCapturedAppLog() -> [String] {
+        guard !appLogPath.isEmpty,
+              let text = try? String(contentsOfFile: appLogPath, encoding: .utf8)
+        else {
+            return []
+        }
+        return text
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    func notificationClickCount(in lines: [String]) -> Int {
+        lines.filter { $0.contains("delegate_did_receive") }.count
+    }
+
+    func waitForManualNotificationClick(
+        notifyDir: String,
+        title: String,
+        timeout: TimeInterval,
+        phase: Int = 1,
+        minimumClicks: Int = 1
+    ) -> Bool {
+        fputs("\n", stderr)
+        fputs("=== NOTIFICATION READY — CLICK IT NOW (phase \(phase)) ===\n", stderr)
+        fputs("Title: \(title)\n", stderr)
+        fputs("Dir:   \(notifyDir)\n", stderr)
+        fputs("Waiting up to \(Int(timeout))s for click #\(minimumClicks)...\n", stderr)
+        fputs("============================================================\n\n", stderr)
+        fflush(stderr)
+
+        let deadline = Date().addingTimeInterval(timeout)
+        var lastPrinted = 0
+        while Date() < deadline {
+            let lines = readCapturedAppLog()
+            if notificationClickCount(in: lines) >= minimumClicks {
+                fputs("Detected notification click #\(minimumClicks) in app log.\n", stderr)
+                fflush(stderr)
+                return true
+            }
+            let remaining = Int(deadline.timeIntervalSinceNow)
+            if remaining != lastPrinted, remaining % 10 == 0 {
+                fputs("... still waiting (\(remaining)s left)\n", stderr)
+                fflush(stderr)
+                lastPrinted = remaining
+            }
+            usleep(500_000)
+        }
+        fputs("Timed out waiting for manual notification click (phase \(phase)).\n", stderr)
+        fflush(stderr)
+        return false
+    }
+
+    func prepareNotificationTest(
+        homeDir: String,
+        workDir: String,
+        stateDir: String?,
+        resp: inout Response
+    ) throws {
+        configureNotificationUITest(homeDir: homeDir, stateDir: stateDir, captureAppOutput: true)
+        try configure(homeDir: homeDir, workDir: workDir, stateDir: stateDir)
+        try launchApp(homeDir: homeDir)
+        resp.daemon_port = configuredDaemonPort
+        usleep(2_000_000)
+
+        let auth = waitForNotificationAuthStatus(timeout: 15)
+        resp.notification_auth_status = auth.status
+        resp.notification_bundle_id = auth.bundleID
+        resp.notification_authorized = auth.authorized
+        resp.app_log_path = capturedAppLogPath
+        resp.app_log_lines = readCapturedAppLog()
+        if auth.status.isEmpty {
+            throw AutomationError.setup(
+                "no notification_diagnostics in app log (app_log_path=\(capturedAppLogPath)); run ./script/install-debug.sh --no-open"
+            )
+        }
+        if !auth.authorized {
+            throw AutomationError.setup(
+                "notification not authorized (status=\(auth.status), bundle_id=\(auth.bundleID)); enable Notifications in System Settings"
+            )
+        }
+    }
+
+    func postNotifyAndWaitForBanner(
+        dir: String,
+        phase: Int,
+        resp: inout Response
+    ) throws {
+        try postSessionNotify(dir: dir)
+        resp.notification_posted = true
+
+        let snapshot = try fetchDaemonEventSnapshot()
+        resp.daemon_event_count = snapshot.count
+        resp.daemon_has_notify_event = snapshot.dirs.contains(dir)
+        if !resp.daemon_has_notify_event {
+            throw AutomationError.setup(
+                "daemon accepted POST but event not in /api/list (port=\(resp.daemon_port), dirs=\(snapshot.dirs))"
+            )
+        }
+
+        let appPosted = waitForAppNotificationPosted(timeout: 12)
+        resp.app_saw_notification_posted = appPosted
+        resp.app_log_lines = readCapturedAppLog()
+        if !appPosted {
+            throw AutomationError.setup(
+                "app never posted macOS notification after daemon event (phase \(phase)); app_log_path=\(capturedAppLogPath)"
+            )
+        }
+
+        fputs("Phase \(phase): posted /api/notify for dir=\(dir). Click the banner when it appears.\n", stderr)
+        fflush(stderr)
+    }
+
+    private func findNotificationClickTarget(title: String) throws -> (AXUIElement, CGPoint)? {
+        let markers = [title, "Agent session finished"]
+        let bundleIDs = [
+            "com.apple.notificationcenterui",
+            "com.apple.UserNotificationCenter",
+            "com.apple.systemuiserver",
+        ]
+
+        var roots: [AXUIElement] = [AXUIElementCreateSystemWide()]
+        for bundleID in bundleIDs {
+            for app in NSRunningApplication.runningApplications(withBundleIdentifier: bundleID) {
+                roots.append(AXUIElementCreateApplication(app.processIdentifier))
+            }
+        }
+
+        for root in roots {
+            if let match = try findClickableElement(containingAny: markers, in: root, maxVisited: 400) {
+                return match
+            }
+        }
+        return nil
+    }
+
+    private func findClickableElement(
+        containingAny markers: [String],
+        in root: AXUIElement,
+        maxVisited: Int
+    ) throws -> (AXUIElement, CGPoint)? {
+        var stack = [root]
+        var visited = 0
+        let pressableRoles: Set<String> = [
+            "AXButton", "AXGroup", "AXStaticText", "AXCell", "AXRow", "AXList",
+            "AXWindow", "AXSheet", "AXPopover",
+        ]
+
+        while !stack.isEmpty, visited < maxVisited {
+            let element = stack.removeLast()
+            visited += 1
+
+            let role = try axRole(element)
+            let title = try axString(element, kAXTitleAttribute as CFString) ?? ""
+            let value = try axString(element, kAXValueAttribute as CFString) ?? ""
+            let description = try axString(element, kAXDescriptionAttribute as CFString) ?? ""
+            let combined = "\(title) \(value) \(description)"
+
+            if markers.contains(where: { combined.localizedCaseInsensitiveContains($0) }),
+               pressableRoles.contains(role)
+            {
+                var point = CGPoint.zero
+                if let frame = try axFrame(element) {
+                    point = CGPoint(x: frame.x + frame.w / 2, y: frame.y + frame.h / 2)
+                }
+                return (element, point)
+            }
+
+            if let children = try axChildren(element) {
+                stack.append(contentsOf: children.reversed())
+            }
+        }
+        return nil
+    }
+
+    private func clickAtGlobalScreenPoint(_ point: CGPoint) {
+        let src = CGEventSource(stateID: .hidSystemState)
+        guard let down = CGEvent(mouseEventSource: src, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left),
+              let up = CGEvent(mouseEventSource: src, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left)
+        else {
+            return
+        }
+        down.post(tap: .cghidEventTap)
+        up.post(tap: .cghidEventTap)
     }
 
     func recordDump(_ node: AXNode, into response: inout Response) {
@@ -980,6 +1448,28 @@ final class UIAutomationSession {
         }
     }
 
+    private static let debugInstalledApp = "/Applications/os-bar-agent-sessions-debug.app"
+
+    private static func quitExistingAgentSessionsApps() {
+        let patterns = [
+            "os-bar-agent-sessions-debug.app/Contents/MacOS/os-bar-agent-sessions",
+        ]
+        var pids = Set<pid_t>()
+        for pattern in patterns {
+            for pid in pidsMatching(pattern: pattern) {
+                pids.insert(pid)
+            }
+        }
+        for pid in pids {
+            signalPID(pid, sig: SIGTERM)
+        }
+        usleep(300_000)
+        for pid in pids {
+            signalPID(pid, sig: SIGKILL)
+        }
+        usleep(200_000)
+    }
+
     private static func killChildProcesses(of parentPID: pid_t) {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
@@ -1032,6 +1522,18 @@ final class UIAutomationSession {
         return Int(UInt16(bigEndian: bound.sin_port))
     }
 
+    private static func resolveNotificationAppBundle(projectRoot: String) throws -> String {
+        _ = projectRoot
+        if FileManager.default.fileExists(atPath: debugInstalledApp) {
+            fputs("Using debug app: \(debugInstalledApp) (bundle: com.os-bar.agent-sessions.debug)\n", stderr)
+            fflush(stderr)
+            return debugInstalledApp
+        }
+        throw AutomationError.setup(
+            "debug app not installed at \(debugInstalledApp); run: ./script/install-debug.sh --no-open"
+        )
+    }
+
     private static func buildApp(projectRoot: String) throws -> String {
         if let path = try? appBinaryPath(projectRoot: projectRoot) {
             return path
@@ -1071,6 +1573,98 @@ final class UIAutomationSession {
                 return msg
             }
         }
+    }
+}
+
+enum HumanAssistedDialog {
+    /// NSAlert does not appear when the helper is a swiftc CLI subprocess; use osascript instead.
+    private static func escapeAppleScript(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+    }
+
+    private static func runAlert(
+        title: String,
+        message: String,
+        buttons: [String],
+        defaultButton: String,
+        cancelButton: String
+    ) -> String? {
+        fputs(">>> [HumanAssisted] Showing dialog: \(title)\n", stderr)
+        fflush(stderr)
+
+        let buttonSpec = buttons.map { "\"\(escapeAppleScript($0))\"" }.joined(separator: ", ")
+        let script = """
+        display alert "\(escapeAppleScript(title))" message "\(escapeAppleScript(message))" as informational buttons {\(buttonSpec)} default button "\(escapeAppleScript(defaultButton))" cancel button "\(escapeAppleScript(cancelButton))"
+        """
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        proc.arguments = ["-e", script]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = pipe
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+        } catch {
+            fputs(">>> [HumanAssisted] osascript failed: \(error)\n", stderr)
+            fflush(stderr)
+            return nil
+        }
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8) ?? ""
+        if proc.terminationStatus != 0 {
+            fputs(">>> [HumanAssisted] dialog dismissed (status=\(proc.terminationStatus)): \(output)\n", stderr)
+            fflush(stderr)
+            return nil
+        }
+        for line in output.split(separator: "\n") {
+            let text = String(line)
+            if text.hasPrefix("button returned:") {
+                let button = text.dropFirst("button returned:".count)
+                    .trimmingCharacters(in: .whitespaces)
+                fputs(">>> [HumanAssisted] User chose: \(button)\n", stderr)
+                fflush(stderr)
+                return button
+            }
+        }
+        fputs(">>> [HumanAssisted] Unexpected osascript output: \(output)\n", stderr)
+        fflush(stderr)
+        return nil
+    }
+
+    static func confirmYesNo(
+        title: String,
+        message: String,
+        yesButton: String,
+        noButton: String
+    ) -> Bool {
+        let choice = runAlert(
+            title: title,
+            message: message,
+            buttons: [noButton, yesButton],
+            defaultButton: yesButton,
+            cancelButton: noButton
+        )
+        return choice == yesButton
+    }
+
+    static func proceedOrCancel(
+        title: String,
+        message: String,
+        proceedButton: String = "OK — ready",
+        cancelButton: String = "Cancel test"
+    ) -> Bool {
+        let choice = runAlert(
+            title: title,
+            message: message,
+            buttons: [cancelButton, proceedButton],
+            defaultButton: proceedButton,
+            cancelButton: cancelButton
+        )
+        return choice == proceedButton
     }
 }
 
@@ -1254,6 +1848,248 @@ func runHelper() -> Never {
 
         case "teardown":
             session.teardown()
+
+        case "notification_post_manual_click":
+            do {
+                let notifyDir = req.notify_dir ?? workDir
+                let title = req.notification_title ?? "Agent session finished"
+                let logSeconds = req.log_capture_seconds ?? 20
+                let waitSeconds = req.manual_click_wait_seconds ?? 120
+
+                try session.prepareNotificationTest(
+                    homeDir: homeDir,
+                    workDir: workDir,
+                    stateDir: request.state_dir,
+                    resp: &resp
+                )
+                try session.postNotifyAndWaitForBanner(dir: notifyDir, phase: 1, resp: &resp)
+
+                let clicked = session.waitForManualNotificationClick(
+                    notifyDir: notifyDir,
+                    title: title,
+                    timeout: TimeInterval(waitSeconds)
+                )
+                resp.notification_clicked = clicked
+                resp.click_ok = clicked
+                usleep(2_000_000)
+
+                resp.app_log_path = session.capturedAppLogPath
+                resp.app_log_lines = session.readCapturedAppLog()
+                resp.log_lines = try session.captureNotificationClickLogs(seconds: logSeconds)
+                resp.notification_click_log_lines = resp.log_lines.filter {
+                    $0.contains("[NotificationClick]")
+                }
+                resp.vscode_log_lines = (resp.log_lines + resp.app_log_lines).filter {
+                    let lower = $0.lowercased()
+                    return lower.contains("vscode") || lower.contains("code_process")
+                }
+            } catch let error as UIAutomationSession.AutomationError {
+                if case .apiDisabled = error {
+                    resp.error = error.localizedDescription ?? "kAXErrorAPIDisabled (-25211)"
+                } else {
+                    resp.error = error.localizedDescription ?? "notification_post_manual_click failed"
+                }
+            } catch {
+                resp.error = error.localizedDescription
+            }
+
+        case "notification_window_focus_manual":
+            do {
+                let notifyDir = req.notify_dir ?? workDir
+                let title = req.notification_title ?? "Agent session finished"
+                let logSeconds = req.log_capture_seconds ?? 30
+                let waitSeconds = req.manual_click_wait_seconds ?? 180
+
+                try session.prepareNotificationTest(
+                    homeDir: homeDir,
+                    workDir: workDir,
+                    stateDir: request.state_dir,
+                    resp: &resp
+                )
+
+                // Phase 1 — first notification + click
+                try session.postNotifyAndWaitForBanner(dir: notifyDir, phase: 1, resp: &resp)
+                guard HumanAssistedDialog.proceedOrCancel(
+                    title: "Round 1 — Click the notification",
+                    message: """
+                    A notification was sent for:
+                    \(notifyDir)
+
+                    Click the "\(title)" banner when it appears, then press OK.
+                    """,
+                    proceedButton: "OK — I clicked it",
+                    cancelButton: "Cancel test"
+                ) else {
+                    resp.error = "user cancelled before first notification click"
+                    break
+                }
+                resp.first_notification_clicked = session.waitForManualNotificationClick(
+                    notifyDir: notifyDir,
+                    title: title,
+                    timeout: TimeInterval(waitSeconds),
+                    phase: 1,
+                    minimumClicks: 1
+                )
+                if !resp.first_notification_clicked {
+                    resp.error = "timed out waiting for first notification click"
+                    break
+                }
+                usleep(2_000_000)
+
+                resp.user_confirmed_window_opened = HumanAssistedDialog.confirmYesNo(
+                    title: "Step 1 — Did VS Code open?",
+                    message: """
+                    A notification was sent and you clicked it.
+
+                    Project folder:
+                    \(notifyDir)
+
+                    Did VS Code open (or focus) the window for this project?
+                    """,
+                    yesButton: "Yes — window opened",
+                    noButton: "No — window did not open"
+                )
+                if !resp.user_confirmed_window_opened {
+                    resp.error = "user reported VS Code did not open after first notification click"
+                    break
+                }
+
+                resp.user_confirmed_desktop_ready = HumanAssistedDialog.proceedOrCancel(
+                    title: "Step 2 — Move window to another Space",
+                    message: """
+                    Move the VS Code window for this project to another macOS Space (desktop):
+                    • Swipe with three/four fingers, or press Control+← / Control+→
+
+                    Then leave a different app — or a different VS Code window — focused on this Space.
+
+                    Click OK when you are ready for the second notification.
+                    """,
+                    proceedButton: "OK — ready for round 2",
+                    cancelButton: "Cancel test"
+                )
+                if !resp.user_confirmed_desktop_ready {
+                    resp.error = "user cancelled before second notification round"
+                    break
+                }
+
+                // Phase 2 — second notification + click (window focus parity)
+                usleep(1_000_000)
+                try session.postNotifyAndWaitForBanner(dir: notifyDir, phase: 2, resp: &resp)
+                guard HumanAssistedDialog.proceedOrCancel(
+                    title: "Round 2 — Click the notification again",
+                    message: """
+                    A second notification was sent for the same folder:
+                    \(notifyDir)
+
+                    Click the banner again, then press OK.
+                    """,
+                    proceedButton: "OK — I clicked it",
+                    cancelButton: "Cancel test"
+                ) else {
+                    resp.error = "user cancelled before second notification click"
+                    break
+                }
+                resp.second_notification_clicked = session.waitForManualNotificationClick(
+                    notifyDir: notifyDir,
+                    title: title,
+                    timeout: TimeInterval(waitSeconds),
+                    phase: 2,
+                    minimumClicks: 2
+                )
+                if !resp.second_notification_clicked {
+                    resp.error = "timed out waiting for second notification click"
+                    break
+                }
+                usleep(2_000_000)
+
+                resp.user_confirmed_correct_window = HumanAssistedDialog.confirmYesNo(
+                    title: "Step 3 — Correct window focused?",
+                    message: """
+                    You clicked the second notification for the same project folder:
+                    \(notifyDir)
+
+                    Did VS Code switch to the correct window (the one on the other Space)?
+                    """,
+                    yesButton: "Yes — correct window",
+                    noButton: "No — wrong window / stayed put"
+                )
+                if !resp.user_confirmed_correct_window {
+                    resp.error = "user reported notification click did not focus the correct VS Code window"
+                    break
+                }
+
+                resp.notification_clicked = true
+                resp.click_ok = true
+                resp.human_assisted_passed = true
+
+                resp.app_log_path = session.capturedAppLogPath
+                resp.app_log_lines = session.readCapturedAppLog()
+                resp.log_lines = try session.captureNotificationClickLogs(seconds: logSeconds)
+                resp.notification_click_log_lines = resp.log_lines.filter {
+                    $0.contains("[NotificationClick]")
+                }
+                resp.vscode_log_lines = (resp.log_lines + resp.app_log_lines).filter {
+                    let lower = $0.lowercased()
+                    return lower.contains("vscode") || lower.contains("code_process")
+                }
+            } catch let error as UIAutomationSession.AutomationError {
+                if case .apiDisabled = error {
+                    resp.error = error.localizedDescription ?? "kAXErrorAPIDisabled (-25211)"
+                } else {
+                    resp.error = error.localizedDescription ?? "notification_window_focus_manual failed"
+                }
+            } catch {
+                resp.error = error.localizedDescription
+            }
+
+        case "notification_click_e2e":
+            do {
+                let notifyDir = req.notify_dir ?? workDir
+                let title = req.notification_title ?? "Agent session finished"
+                let logSeconds = req.log_capture_seconds ?? 45
+
+                session.configureNotificationUITest(
+                    homeDir: homeDir,
+                    stateDir: request.state_dir,
+                    captureAppOutput: true
+                )
+                try session.configure(homeDir: homeDir, workDir: workDir, stateDir: request.state_dir)
+                try session.launchApp(homeDir: homeDir)
+                usleep(2_000_000) // baseline poll
+                try session.postSessionNotify(dir: notifyDir)
+                resp.notification_posted = true
+                let snapshot = try session.fetchDaemonEventSnapshot()
+                resp.daemon_event_count = snapshot.count
+                resp.daemon_has_notify_event = snapshot.dirs.contains(notifyDir)
+                _ = session.waitForAppNotificationPosted(timeout: 12)
+                usleep(1_000_000)
+
+                let click = try session.clickSessionNotification(title: title, timeout: 8)
+                resp.notification_clicked = click.clicked
+                resp.click_ok = click.clicked
+                resp.click_x = click.x
+                resp.click_y = click.y
+                usleep(2_000_000) // allow code + vscode activation
+
+                resp.app_log_path = session.capturedAppLogPath
+                resp.app_log_lines = session.readCapturedAppLog()
+                resp.log_lines = try session.captureNotificationClickLogs(seconds: logSeconds)
+                resp.notification_click_log_lines = resp.log_lines.filter {
+                    $0.contains("[NotificationClick]")
+                }
+                resp.vscode_log_lines = (resp.log_lines + resp.app_log_lines).filter {
+                    let lower = $0.lowercased()
+                    return lower.contains("vscode") || lower.contains("code_process")
+                }
+            } catch let error as UIAutomationSession.AutomationError {
+                if case .apiDisabled = error {
+                    resp.error = error.localizedDescription ?? "kAXErrorAPIDisabled (-25211)"
+                } else {
+                    resp.error = error.localizedDescription ?? "notification_click_e2e failed"
+                }
+            } catch {
+                resp.error = error.localizedDescription
+            }
 
         case "sequence":
             session.resetDumpCount()

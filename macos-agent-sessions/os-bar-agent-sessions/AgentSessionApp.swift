@@ -103,10 +103,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     private func ensureDaemonRunning() async {
         defer { DaemonReadiness.shared.markReady() }
+        let daemonConfig = AgentSessionsDaemonConfig.resolved
+        if AgentSessionsDebug.isEnabled {
+            let env = ProcessInfo.processInfo.environment
+            SessionNotificationClickDebug.log("daemon_connect", [
+                "port": String(daemonConfig.port),
+                "state_dir": daemonConfig.stateDir,
+                "home": env["HOME"] ?? NSHomeDirectory(),
+            ])
+        }
         if (try? await DaemonClient.shared.health()) == true {
+            if AgentSessionsDebug.isEnabled {
+                SessionNotificationClickDebug.log("daemon_connect_healthy", ["port": String(daemonConfig.port)])
+            }
             return
         }
-        spawnDaemon()
+        AgentSessionsDaemonConfig.terminateStaleDaemonIfNeeded()
+        spawnDaemon(config: daemonConfig)
         for _ in 0..<50 {
             if (try? await DaemonClient.shared.health()) == true {
                 return
@@ -116,25 +129,42 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         print("Warning: daemon health check failed after spawn")
     }
 
-    private func spawnDaemon() {
+    private func spawnDaemon(config: AgentSessionsDaemonConfig.Snapshot) {
         let binary = daemonBinaryPath()
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
-        var args = ["serve"]
-        let env = ProcessInfo.processInfo.environment
-        if let port = env["AGENT_SESSIONS_PORT"] {
-            args.append(contentsOf: ["--port", port])
-        }
-        if let stateDir = env["AGENT_SESSIONS_STATE_DIR"] {
-            args.append(contentsOf: ["--state-dir", stateDir])
-        }
-        process.arguments = args
+        process.arguments = [
+            "serve",
+            "--port", String(config.port),
+            "--state-dir", config.stateDir,
+        ]
+        var env = ProcessInfo.processInfo.environment
+        env["AGENT_SESSIONS_PORT"] = String(config.port)
+        env["AGENT_SESSIONS_STATE_DIR"] = config.stateDir
         process.environment = env
         do {
+            try FileManager.default.createDirectory(
+                atPath: config.stateDir,
+                withIntermediateDirectories: true
+            )
             try process.run()
             daemonProcess = process
+            if AgentSessionsDebug.isEnabled {
+                SessionNotificationClickDebug.log("daemon_spawned", [
+                    "port": String(config.port),
+                    "state_dir": config.stateDir,
+                    "pid": String(process.processIdentifier),
+                ])
+            }
         } catch {
             print("Failed to spawn daemon at \(binary): \(error)")
+            if AgentSessionsDebug.isEnabled {
+                SessionNotificationClickDebug.log("daemon_spawn_failed", [
+                    "error": error.localizedDescription,
+                    "port": String(config.port),
+                    "state_dir": config.stateDir,
+                ])
+            }
         }
     }
 
@@ -155,8 +185,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private static let vscodeBundleID = "com.microsoft.VSCode"
 
-    private func activateVSCodeIfNeeded(exitCode: Int32) {
+    private func activateVSCodeIfNeeded(exitCode: Int32, clickSource: SessionClickSource?) {
         guard exitCode == 0 else { return }
+        if clickSource == .notification, AgentSessionsDebug.isEnabled {
+            _ = SessionNotificationClickDebug.logVSCodeActivationAttempt(exitCode: exitCode)
+            return
+        }
         NSRunningApplication
             .runningApplications(withBundleIdentifier: Self.vscodeBundleID)
             .first?
@@ -165,14 +199,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Open a session directory in VS Code and mark it consumed (menu + notification clicks).
     @MainActor
-    func openSessionDir(_ dir: String) {
-        openDir(dir)
+    func openSessionDir(_ dir: String, source: SessionClickSource = .menuBar) {
+        if source == .notification {
+            SessionNotificationClickDebug.log("open_session_dir", [
+                "dir": dir,
+                "store_present": String(store != nil),
+            ])
+        }
+        openDir(dir, clickSource: source)
         store?.markConsumed(dir: dir)
+        if source == .notification {
+            SessionNotificationClickDebug.log("mark_consumed_dispatched", ["dir": dir])
+        }
     }
 
     /// Launch `/usr/local/bin/code <dir>`, show a loading cursor while running
     /// (auto-dismiss after 3 s), and log exit code / stdout / stderr.
-    func openDir(_ dir: String) {
+    func openDir(_ dir: String, clickSource: SessionClickSource? = nil) {
+        if clickSource == .notification {
+            SessionNotificationClickDebug.log("open_dir_launch", [
+                "dir": dir,
+                "command": SessionDirCommand.line(for: dir),
+                "code_binary_exists": String(FileManager.default.fileExists(atPath: SessionDirCommand.binary)),
+            ])
+            SessionNotificationClickDebug.snapshotContext(step: "before_code_launch")
+        }
+
         pushLoadingCursor()
 
         let startTime = Date()
@@ -210,7 +262,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async {
                 timeoutWork.cancel()
                 self?.popLoadingCursor()
-                self?.activateVSCodeIfNeeded(exitCode: proc.terminationStatus)
+                if clickSource == .notification {
+                    SessionNotificationClickDebug.log("code_process_finished", [
+                        "dir": dir,
+                        "exit_code": String(proc.terminationStatus),
+                        "duration_ms": String(durationMs),
+                        "stdout": stdout.trimmingCharacters(in: .whitespacesAndNewlines),
+                        "stderr": stderr.trimmingCharacters(in: .whitespacesAndNewlines),
+                    ])
+                    SessionNotificationClickDebug.snapshotContext(step: "before_vscode_activation")
+                }
+                self?.activateVSCodeIfNeeded(exitCode: proc.terminationStatus, clickSource: clickSource)
+                if clickSource == .notification {
+                    SessionNotificationClickDebug.snapshotContext(step: "after_vscode_activation")
+                }
 
                 let entry = NotifyLogEntry(
                     source: "log",
@@ -235,7 +300,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         do {
             try process.run()
+            if clickSource == .notification {
+                SessionNotificationClickDebug.log("code_process_started", [
+                    "dir": dir,
+                    "pid": String(process.processIdentifier),
+                ])
+            }
         } catch {
+            if clickSource == .notification {
+                SessionNotificationClickDebug.log("code_process_launch_failed", [
+                    "dir": dir,
+                    "error": error.localizedDescription,
+                ])
+            }
             DispatchQueue.main.async { [weak self] in
                 timeoutWork.cancel()
                 self?.popLoadingCursor()

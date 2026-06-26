@@ -221,6 +221,18 @@ func waitUntilDaemonDown(t *testing.T, baseURL string) bool {
 	return false
 }
 
+func waitUntilPIDFileRemoved(t *testing.T, pidPath string) bool {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(pidPath); os.IsNotExist(err) {
+			return true
+		}
+		time.Sleep(daemonReadyPoll)
+	}
+	return false
+}
+
 func startDaemonProcess(t *testing.T, binary, stateDir string, port int) *daemonHandle {
 	t.Helper()
 	if port == 0 {
@@ -276,8 +288,7 @@ func runDaemonSigtermShutdown(t *testing.T, binary string, req *Request) *Respon
 		t.Fatalf("signal SIGTERM to %d: %v", pid, err)
 	}
 	stopped := waitUntilDaemonDown(t, handle.baseURL)
-	_, statErr := os.Stat(pidPath)
-	pidRemoved := os.IsNotExist(statErr)
+	pidRemoved := waitUntilPIDFileRemoved(t, pidPath)
 	handle.cmd = nil
 	return &Response{
 		BaseURL:        handle.baseURL,

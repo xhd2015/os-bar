@@ -4,11 +4,17 @@ set -euo pipefail
 # Build os-bar-agent-sessions.app and install to /Applications (no drag-and-drop).
 # Same end result as a standard .app install: copy into /Applications and clear
 # the quarantine extended attribute.
+#
+# Override via env (used by install-debug.sh):
+#   APP_NAME, BUNDLE_ID, SWIFT_BUILD_CONFIG, INSTALL_VARIANT
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-APP_NAME="os-bar-agent-sessions"
+APP_NAME="${APP_NAME:-os-bar-agent-sessions}"
+BUNDLE_ID="${BUNDLE_ID:-com.os-bar.agent-sessions}"
+SWIFT_BUILD_CONFIG="${SWIFT_BUILD_CONFIG:-release}"
+INSTALL_VARIANT="${INSTALL_VARIANT:-release}"
 SOURCE_APP="$PROJECT_DIR/$APP_NAME.app"
 INSTALL_ROOT="${INSTALL_ROOT:-/Applications}"
 TARGET_APP="$INSTALL_ROOT/$APP_NAME.app"
@@ -65,8 +71,12 @@ if [[ ! -w "$INSTALL_ROOT" ]]; then
     exit 1
 fi
 
-echo "==> Building $APP_NAME.app"
-BUNDLE_SKIP_DMG=1 "$SCRIPT_DIR/bundle.sh"
+echo "==> Building $APP_NAME.app ($SWIFT_BUILD_CONFIG)"
+BUNDLE_SKIP_DMG=1 \
+    APP_NAME="$APP_NAME" \
+    BUNDLE_ID="$BUNDLE_ID" \
+    SWIFT_BUILD_CONFIG="$SWIFT_BUILD_CONFIG" \
+    "$SCRIPT_DIR/bundle.sh"
 
 if [[ ! -d "$SOURCE_APP" ]]; then
     echo "error: expected app bundle at $SOURCE_APP" >&2
@@ -75,7 +85,7 @@ fi
 
 echo "==> Stopping running $APP_NAME (if any)"
 osascript -e "tell application \"$APP_NAME\" to quit" 2>/dev/null || true
-pkill -x "$APP_NAME" 2>/dev/null || true
+pkill -f "${TARGET_APP}/Contents/MacOS/" 2>/dev/null || true
 sleep 0.5
 
 echo "==> Installing to $TARGET_APP"
@@ -85,8 +95,17 @@ xattr -dr com.apple.quarantine "$TARGET_APP" 2>/dev/null || true
 
 echo ""
 echo "==> Installed: $TARGET_APP"
-echo "    First launch from a downloaded build may still need right-click → Open."
-echo "    Local ad-hoc builds from this machine usually launch normally."
+if [[ "$INSTALL_VARIANT" == "debug" ]]; then
+    echo "    Bundle ID: $BUNDLE_ID"
+    echo "    Enable Notifications: System Settings → Notifications → $APP_NAME"
+    echo "    Daemon state: ~/.os-bar/agent-sessions-debug (isolated from production)"
+    echo "    Daemon port: random available port on each launch (not 38271)"
+    echo "    Debug log (default): ~/.os-bar/agent-sessions-debug.log"
+    echo "    Override log path: AGENT_SESSIONS_NOTIFICATION_DEBUG_LOG"
+else
+    echo "    First launch from a downloaded build may still need right-click → Open."
+    echo "    Local ad-hoc builds from this machine usually launch normally."
+fi
 
 if [[ "$OPEN_AFTER_INSTALL" -eq 1 ]]; then
     echo "==> Opening $APP_NAME"

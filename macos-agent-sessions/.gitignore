@@ -11,5 +11,6 @@
 
 # App bundle and archive
 os-bar-agent-sessions.app/
+os-bar-agent-sessions-debug.app/
 os-bar-agent-sessions.dmg
 os-bar-agent-sessions.zip

@@ -10,7 +10,10 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "os-bar-agent-sessions",
-            path: "os-bar-agent-sessions"
+            path: "os-bar-agent-sessions",
+            swiftSettings: [
+                .define("AGENT_SESSIONS_DEBUG", .when(configuration: .debug)),
+            ]
         ),
     ]
 )

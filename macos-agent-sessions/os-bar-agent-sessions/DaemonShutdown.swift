@@ -7,10 +7,14 @@ struct DaemonShutdownConfig: Equatable {
 }
 
 enum DaemonShutdown {
-    static let agentSessions = DaemonShutdownConfig(
-        stateDirEnvKey: "AGENT_SESSIONS_STATE_DIR",
-        defaultRelativeStateDir: ".os-bar/agent-sessions"
-    )
+    static var agentSessions: DaemonShutdownConfig {
+        DaemonShutdownConfig(
+            stateDirEnvKey: "AGENT_SESSIONS_STATE_DIR",
+            defaultRelativeStateDir: AgentSessionsDebug.isEnabled
+                ? AgentSessionsDaemonConfig.debugStateSubpath
+                : AgentSessionsDaemonConfig.productionStateSubpath
+        )
+    }
 
     enum Target: Equatable {
         case none

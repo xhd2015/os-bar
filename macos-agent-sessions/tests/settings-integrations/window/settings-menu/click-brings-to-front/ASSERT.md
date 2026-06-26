@@ -1,3 +1,8 @@
+---
+label: ui-automation, slow, requires-accessibility
+explanation: With Integrations window already open, menu-bar Settings click brings it to front without duplicate windows.
+---
+
 ## Expected
 - `resp.WindowOpen == true`.
 - `resp.WindowMain == true` (AX `AXMain` on Integrations window).

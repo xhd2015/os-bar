@@ -94,7 +94,9 @@ session-notifications/                   ROOT: Request{Action, Dir, ...}, Respon
     │
     └── click/                           DECISION: click handler
         ├── menu-item-executes-command/  LEAF: menu click → code command only
-        └── opens-dir-and-consumes/      LEAF: notification click → activate app + code command
+        ├── opens-dir-and-consumes/      LEAF: notification click → activate app + code command
+        ├── notification-focuses-target-window/ LEAF: notification → focus VS Code window for dir
+        └── menu-notification-window-parity/    LEAF: menu vs notification same focused window
 ```
 
 ## Parameter Ranking (macos-notification)
@@ -143,6 +145,8 @@ session-notifications/                   ROOT: Request{Action, Dir, ...}, Respon
 | 30 | `macos-notification/content/subtitle-absolute-parent/` | Outside home/cwd → absolute parent |
 | 31 | `macos-notification/click/menu-item-executes-command/` | Menu click → `code` command, no app activation |
 | 32 | `macos-notification/click/opens-dir-and-consumes/` | Notification click → activate app + `code` command |
+| 33 | `macos-notification/click/notification-focuses-target-window/` | Notification click → focus VS Code window for target dir |
+| 34 | `macos-notification/click/menu-notification-window-parity/` | Menu and notification clicks focus same VS Code window |
 
 ## Coverage Map
 
@@ -170,6 +174,8 @@ session-notifications/                   ROOT: Request{Action, Dir, ...}, Respon
 | Subtitle: cwd-relative | `content/subtitle-cwd-relative` | ✓ |
 | Subtitle: absolute parent | `content/subtitle-absolute-parent` | ✓ |
 | Click opens dir + consumes | `click/opens-dir-and-consumes` | ✓ |
+| Notification focuses target VS Code window | `click/notification-focuses-target-window` | RED (stale window bug) |
+| Menu/notification window focus parity | `click/menu-notification-window-parity` | RED (stale window bug) |
 
 ## How to Run
 
@@ -230,6 +236,10 @@ type Request struct {
 	IsBaseline   bool   `json:"is_baseline,omitempty"`
 	Home         string `json:"home,omitempty"`
 	CWD          string `json:"cwd,omitempty"`
+	// --- vscode window focus click test fields ---
+	ClickSource        string   `json:"click_source,omitempty"`
+	VSCodeFrontmostDir string   `json:"vscode_frontmost_dir,omitempty"`
+	VSCodeOpenDirs     []string `json:"vscode_open_dirs,omitempty"`
 }
 
 // Response is parsed from the Swift test helper's stdout.
@@ -253,6 +263,8 @@ type Response struct {
 	ExecutedCommand  string `json:"executed_command,omitempty"`
 	AppActivated     bool   `json:"app_activated,omitempty"`
 	WindowOpened     bool   `json:"window_opened,omitempty"`
+	FocusedVSCodeDir     string `json:"focused_vscode_dir,omitempty"`
+	MenuFocusedVSCodeDir string `json:"menu_focused_vscode_dir,omitempty"`
 }
 
 func Run(t *testing.T, req *Request) (*Response, error) {
