@@ -3,7 +3,8 @@
 - `resp.Error == ""`.
 - `resp.AppActivated == true`.
 - `resp.WindowOpened == false`.
-- `resp.ExecutedCommand == "/usr/local/bin/code /proj/x"`.
+- `resp.ExecutedCommand == "/usr/local/bin/kool vscode open /proj/x --ipc-only --json"`.
+- `resp.OpenMethod == "kool_ipc"`.
 - `resp.OpenedDir == "/proj/x"`.
 - `resp.ConsumedDir == "/proj/x"`.
 
@@ -29,7 +30,7 @@ func Assert(t *testing.T, req *Request, resp *Response, err error) {
 		t.Fatalf("test helper reported error: %s", resp.Error)
 	}
 	const dir = "/proj/x"
-	const wantCmd = "/usr/local/bin/code /proj/x"
+	const wantCmd = "/usr/local/bin/kool vscode open /proj/x --ipc-only --json"
 	if !resp.AppActivated {
 		t.Fatal("notification click must activate app before opening session")
 	}
@@ -44,6 +45,9 @@ func Assert(t *testing.T, req *Request, resp *Response, err error) {
 	}
 	if resp.ConsumedDir != dir {
 		t.Fatalf("expected consumed_dir %q, got %q", dir, resp.ConsumedDir)
+	}
+	if resp.OpenMethod != "kool_ipc" {
+		t.Fatalf("expected open_method kool_ipc, got %q", resp.OpenMethod)
 	}
 	t.Logf("opens-dir-and-consumes OK: activated=%v cmd=%s", resp.AppActivated, resp.ExecutedCommand)
 }

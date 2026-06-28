@@ -6,12 +6,16 @@
 # menu item: execute code <dir> only
 menu_item_click(dir) -> executed_command, app_activated=false, window_opened=false
 
-# notification: activate app first (no window), then execute code <dir>
-notification_click(dir) -> app_activated=true, window_opened=false, executed_command, opened_dir, consumed_dir
+# notification: kool IPC probe then optional code fallback; log openMethod
+notification_click(dir) -> kool_attempt?, executed_command, open_method, opened_dir, consumed_dir
 
-# vscode focus: multi-window VS Code; click must focus window for target dir
-vscode_focus_click(source, dir, frontmost, open_dirs) -> focused_vscode_dir
-vscode_focus_parity(dir, frontmost, open_dirs) -> menu_focused_vscode_dir, focused_vscode_dir
+# vscode focus: multi-window VS Code; notification uses kool IPC to focus target window
+vscode_focus_click(source, dir, frontmost, open_dirs, kool_present_paths, kool_ipc_handled)
+  -> focused_vscode_dir, open_method, executed_command
+vscode_focus_parity(...) -> menu_focused_vscode_dir, focused_vscode_dir
+
+# kool-only probe (no multi-window): notification_kool_open
+notification_kool_open(dir, kool env) -> open_method, kool_attempted, fallback_reason, code_executed
 ```
 
 ## Preconditions

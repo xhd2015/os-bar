@@ -41,7 +41,8 @@ logs-jsonl/                              ROOT: Request{Action, Port, StateDir, .
 │   └── [SETUP] req.Action = http_sequence; assert notify-logs.jsonl
 │   │
 │   ├── writes-jsonl-line/                 LEAF: 1 notify → 1 line, valid JSON, trailing \n
-│   └── second-append/                     LEAF: 2 notifies → 2 lines, no `[` array wrapper
+│   ├── second-append/                     LEAF: 2 notifies → 2 lines, no `[` array wrapper
+│   └── notification-click-logs-method/    LEAF: command log persists openMethod + kool fields
 │
 ├── load/                                  DECISION: concern = JSONL load on daemon start
 │   └── [SETUP] seed notify-logs.jsonl before serve
@@ -98,6 +99,7 @@ logs-jsonl/                              ROOT: Request{Action, Port, StateDir, .
 |---|------|-------------|
 | 1 | `append/writes-jsonl-line/` | First log-only notify → 1 JSONL line with trailing `\n` |
 | 2 | `append/second-append/` | Two appends → 2 lines; file is not a JSON array |
+| 2b | `append/notification-click-logs-method/` | POST command log with `openMethod` round-trips to JSONL |
 | 3 | `load/reads-jsonl/` | 3-line JSONL seed → daemon loads 3 entries via API |
 | 4 | `cap/truncates-at-200/` | 201st entry → ≤200 lines on disk, oldest dropped |
 | 5 | `migrate/legacy-json-array/` | Legacy `notify-logs.json` → `.jsonl`, `.json` removed |
@@ -182,11 +184,15 @@ type HTTPStep struct {
 
 // CommandLogDetails mirrors NotifyLogEntry.command in store and TestHelper.
 type CommandLogDetails struct {
-	Command    string `json:"command"`
-	ExitCode   int    `json:"exitCode"`
-	Stdout     string `json:"stdout"`
-	Stderr     string `json:"stderr"`
-	DurationMs int    `json:"durationMs"`
+	Command        string `json:"command"`
+	ExitCode       int    `json:"exitCode"`
+	Stdout         string `json:"stdout"`
+	Stderr         string `json:"stderr"`
+	DurationMs     int    `json:"durationMs"`
+	OpenMethod     string `json:"openMethod,omitempty"`
+	KoolAttempted  bool   `json:"koolAttempted,omitempty"`
+	KoolIpcHandled bool   `json:"koolIpcHandled,omitempty"`
+	FallbackReason string `json:"fallbackReason,omitempty"`
 }
 
 // NotifyLogEntry mirrors NotifyLogStore entries.

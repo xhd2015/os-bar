@@ -30,6 +30,10 @@ struct NotifyLogEntry: Codable {
         let stdout: String
         let stderr: String
         let durationMs: Int
+        var openMethod: String? = nil
+        var koolAttempted: Bool? = nil
+        var koolIpcHandled: Bool? = nil
+        var fallbackReason: String? = nil
     }
 }
 

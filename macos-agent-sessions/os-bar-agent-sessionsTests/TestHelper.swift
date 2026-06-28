@@ -19,6 +19,10 @@ struct CommandLogDetails: Codable {
     let stdout: String
     let stderr: String
     let durationMs: Int
+    var openMethod: String? = nil
+    var koolAttempted: Bool? = nil
+    var koolIpcHandled: Bool? = nil
+    var fallbackReason: String? = nil
 }
 
 /// Mirrors production NotifyLogEntry (minimal fields needed for testing).
@@ -181,6 +185,11 @@ struct Request: Codable {
     let pid_file_contents: String?
     let state_dir_env_value: String?
     let launch_arguments: [String]?
+    // --- notification kool open (TestVSCodeFocusSimulator) ---
+    let kool_present_paths: [String]?
+    let kool_ipc_handled: Bool?
+    let kool_ipc_error: String?
+    let kool_json_invalid: Bool?
 }
 
 struct TestLogEntryInput: Codable {
@@ -242,6 +251,12 @@ struct Response: Codable {
     // --- vscode window focus click response fields ---
     var focused_vscode_dir: String = ""
     var menu_focused_vscode_dir: String = ""
+    var open_method: String = ""
+    var kool_attempted: Bool = false
+    var kool_ipc_handled: Bool = false
+    var fallback_reason: String = ""
+    var code_executed: Bool = false
+    var resolved_kool_bin: String = ""
     // --- daemon quit response fields ---
     var quit_target_kind: String = ""
     var quit_target_pid: Int = 0
@@ -421,11 +436,121 @@ enum SessionDirCommand {
     }
 }
 
+/// Mirrors production `SessionKoolBinary` with injectable present paths for tests.
+enum TestSessionKoolBinary {
+    static let candidates = [
+        "/usr/bin/kool",
+        "/usr/local/bin/kool",
+        "/Users/xhd2015/go/bin/kool",
+    ]
+
+    static func resolve(presentPaths: Set<String>) -> String? {
+        for path in candidates where presentPaths.contains(path) {
+            return path
+        }
+        return nil
+    }
+
+    static func commandLine(binary: String, dir: String) -> String {
+        "\(binary) vscode open \(dir) --ipc-only --json"
+    }
+}
+
+struct TestKoolSimConfig {
+    var presentPaths: Set<String>
+    var ipcHandled: Bool
+    var jsonInvalid: Bool
+}
+
+struct TestSessionDirOpenPlan {
+    let executedCommand: String
+    let openMethod: String
+    let koolAttempted: Bool
+    let koolIpcHandled: Bool
+    let fallbackReason: String
+    let codeExecuted: Bool
+    let resolvedKoolBin: String
+}
+
+enum TestSessionDirOpener {
+    static func planOpen(
+        dir: String,
+        source: SessionClickSource,
+        kool: TestKoolSimConfig
+    ) -> TestSessionDirOpenPlan {
+        if source == .menuBar {
+            return TestSessionDirOpenPlan(
+                executedCommand: SessionDirCommand.line(for: dir),
+                openMethod: "",
+                koolAttempted: false,
+                koolIpcHandled: false,
+                fallbackReason: "",
+                codeExecuted: true,
+                resolvedKoolBin: ""
+            )
+        }
+
+        guard let koolBin = TestSessionKoolBinary.resolve(presentPaths: kool.presentPaths) else {
+            return TestSessionDirOpenPlan(
+                executedCommand: SessionDirCommand.line(for: dir),
+                openMethod: "code_cli",
+                koolAttempted: false,
+                koolIpcHandled: false,
+                fallbackReason: "kool_missing",
+                codeExecuted: true,
+                resolvedKoolBin: ""
+            )
+        }
+
+        let koolCmd = TestSessionKoolBinary.commandLine(binary: koolBin, dir: dir)
+        if kool.jsonInvalid || !kool.ipcHandled {
+            let reason = kool.jsonInvalid ? "kool_json_parse_error" : "kool_ipc_not_handled"
+            return TestSessionDirOpenPlan(
+                executedCommand: SessionDirCommand.line(for: dir),
+                openMethod: "code_cli",
+                koolAttempted: true,
+                koolIpcHandled: false,
+                fallbackReason: reason,
+                codeExecuted: true,
+                resolvedKoolBin: koolBin
+            )
+        }
+
+        return TestSessionDirOpenPlan(
+            executedCommand: koolCmd,
+            openMethod: "kool_ipc",
+            koolAttempted: true,
+            koolIpcHandled: true,
+            fallbackReason: "",
+            codeExecuted: false,
+            resolvedKoolBin: koolBin
+        )
+    }
+}
+
+func testKoolConfig(from request: Request) -> TestKoolSimConfig {
+    TestKoolSimConfig(
+        presentPaths: Set(request.kool_present_paths ?? []),
+        ipcHandled: request.kool_ipc_handled ?? false,
+        jsonInvalid: request.kool_json_invalid ?? false
+    )
+}
+
+func applyOpenPlan(_ plan: TestSessionDirOpenPlan, to response: inout Response) {
+    response.executed_command = plan.executedCommand
+    response.open_method = plan.openMethod
+    response.kool_attempted = plan.koolAttempted
+    response.kool_ipc_handled = plan.koolIpcHandled
+    response.fallback_reason = plan.fallbackReason
+    response.code_executed = plan.codeExecuted
+    response.resolved_kool_bin = plan.resolvedKoolBin
+}
+
 enum TestSessionClickHandler {
     struct ClickResult {
         let appActivated: Bool
         let windowOpened: Bool
-        let executedCommand: String
+        let plan: TestSessionDirOpenPlan
         let openedDir: String
         let consumedDir: String
     }
@@ -442,8 +567,13 @@ enum TestSessionClickHandler {
         openSessionDir(dir)
     }
 
-    static func simulateClick(dir: String, source: SessionClickSource) -> ClickResult {
+    static func simulateClick(
+        dir: String,
+        source: SessionClickSource,
+        kool: TestKoolSimConfig = TestKoolSimConfig(presentPaths: [], ipcHandled: false, jsonInvalid: false)
+    ) -> ClickResult {
         var appActivated = false
+        let plan = TestSessionDirOpener.planOpen(dir: dir, source: source, kool: kool)
 
         handleClick(
             dir: dir,
@@ -455,7 +585,7 @@ enum TestSessionClickHandler {
         return ClickResult(
             appActivated: appActivated,
             windowOpened: false,
-            executedCommand: SessionDirCommand.line(for: dir),
+            plan: plan,
             openedDir: dir,
             consumedDir: dir
         )
@@ -463,7 +593,7 @@ enum TestSessionClickHandler {
 }
 
 func applySessionClickResult(_ result: TestSessionClickHandler.ClickResult, to response: inout Response) {
-    response.executed_command = result.executedCommand
+    applyOpenPlan(result.plan, to: &response)
     response.app_activated = result.appActivated
     response.window_opened = result.windowOpened
     response.opened_dir = result.openedDir
@@ -484,7 +614,7 @@ enum TestVSCodeFocusSimulator {
 
     struct FocusResult {
         let focusedDir: String
-        let executedCommand: String
+        let plan: TestSessionDirOpenPlan
         let appActivated: Bool
         let openedDir: String
         let consumedDir: String
@@ -493,10 +623,12 @@ enum TestVSCodeFocusSimulator {
     static func simulateOpenSession(
         targetDir: String,
         source: SessionClickSource,
-        environment: Environment
+        environment: Environment,
+        kool: TestKoolSimConfig
     ) -> FocusResult {
         var env = environment
         var appActivated = false
+        let plan = TestSessionDirOpener.planOpen(dir: targetDir, source: source, kool: kool)
 
         TestSessionClickHandler.handleClick(
             dir: targetDir,
@@ -505,15 +637,17 @@ enum TestVSCodeFocusSimulator {
                 appActivated = true
             },
             openSessionDir: { dir in
-                env.openDirs = normalizedUniqueDirs(env.openDirs + [dir])
-                env.frontmostDir = dir
-                // Mirrors activateVSCodeIfNeeded after successful `code` exit.
+                let opened = plan.codeExecuted || plan.openMethod == "kool_ipc"
+                if opened {
+                    env.openDirs = normalizedUniqueDirs(env.openDirs + [dir])
+                    env.frontmostDir = dir
+                }
             }
         )
 
         return FocusResult(
             focusedDir: env.frontmostDir,
-            executedCommand: SessionDirCommand.line(for: targetDir),
+            plan: plan,
             appActivated: appActivated,
             openedDir: targetDir,
             consumedDir: targetDir
@@ -1194,7 +1328,7 @@ func runHelper() -> Never {
         }
 
         applySessionClickResult(
-            TestSessionClickHandler.simulateClick(dir: dir, source: .menuBar),
+            TestSessionClickHandler.simulateClick(dir: dir, source: .menuBar, kool: testKoolConfig(from: request)),
             to: &response
         )
 
@@ -1205,7 +1339,26 @@ func runHelper() -> Never {
         }
 
         applySessionClickResult(
-            TestSessionClickHandler.simulateClick(dir: dir, source: .notification),
+            TestSessionClickHandler.simulateClick(
+                dir: dir,
+                source: .notification,
+                kool: testKoolConfig(from: request)
+            ),
+            to: &response
+        )
+
+    case "notification_kool_open":
+        guard let dir = request.dir else {
+            response.error = "missing dir for notification_kool_open"
+            break
+        }
+
+        applySessionClickResult(
+            TestSessionClickHandler.simulateClick(
+                dir: dir,
+                source: .notification,
+                kool: testKoolConfig(from: request)
+            ),
             to: &response
         )
 
@@ -1241,13 +1394,15 @@ func runHelper() -> Never {
             openDirs: openDirs,
             frontmostDir: frontmost
         )
+        let kool = testKoolConfig(from: request)
         let result = TestVSCodeFocusSimulator.simulateOpenSession(
             targetDir: dir,
             source: source,
-            environment: env
+            environment: env,
+            kool: kool
         )
         response.focused_vscode_dir = result.focusedDir
-        response.executed_command = result.executedCommand
+        applyOpenPlan(result.plan, to: &response)
         response.app_activated = result.appActivated
         response.opened_dir = result.openedDir
         response.consumed_dir = result.consumedDir
@@ -1270,19 +1425,22 @@ func runHelper() -> Never {
             openDirs: openDirs,
             frontmostDir: frontmost
         )
+        let kool = testKoolConfig(from: request)
         let menuResult = TestVSCodeFocusSimulator.simulateOpenSession(
             targetDir: dir,
             source: .menuBar,
-            environment: env
+            environment: env,
+            kool: kool
         )
         let notificationResult = TestVSCodeFocusSimulator.simulateOpenSession(
             targetDir: dir,
             source: .notification,
-            environment: env
+            environment: env,
+            kool: kool
         )
         response.menu_focused_vscode_dir = menuResult.focusedDir
         response.focused_vscode_dir = notificationResult.focusedDir
-        response.executed_command = notificationResult.executedCommand
+        applyOpenPlan(notificationResult.plan, to: &response)
         response.app_activated = notificationResult.appActivated
         response.opened_dir = notificationResult.openedDir
         response.consumed_dir = notificationResult.consumedDir

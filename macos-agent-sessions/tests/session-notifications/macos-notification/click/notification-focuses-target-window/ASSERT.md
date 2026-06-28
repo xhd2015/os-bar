@@ -1,7 +1,8 @@
 ## Expected
 
 - `resp.Error == ""`.
-- `resp.ExecutedCommand == "/usr/local/bin/code /proj/b"`.
+- `resp.ExecutedCommand == "/usr/local/bin/kool vscode open /proj/b --ipc-only --json"`.
+- `resp.OpenMethod == "kool_ipc"`.
 - `resp.AppActivated == true`.
 - `resp.OpenedDir == "/proj/b"`.
 - `resp.ConsumedDir == "/proj/b"`.
@@ -29,9 +30,12 @@ func Assert(t *testing.T, req *Request, resp *Response, err error) {
 	}
 	const targetDir = "/proj/b"
 	const staleFrontmost = "/proj/a"
-	const wantCmd = "/usr/local/bin/code /proj/b"
+	const wantCmd = "/usr/local/bin/kool vscode open /proj/b --ipc-only --json"
 	if resp.ExecutedCommand != wantCmd {
 		t.Fatalf("expected executed_command %q, got %q", wantCmd, resp.ExecutedCommand)
+	}
+	if resp.OpenMethod != "kool_ipc" {
+		t.Fatalf("expected open_method kool_ipc, got %q", resp.OpenMethod)
 	}
 	if !resp.AppActivated {
 		t.Fatal("notification click must activate app before opening session")

@@ -32,8 +32,9 @@ snapshots after each poll. When a `(dir, timestamp)` pair is new relative to the
 previous snapshot—and the poll is not the **startup baseline**—it schedules a
 macOS user notification. **Notification content** uses title `Agent session
 finished`, body = basename(dir), subtitle = shortened parent path (cwd-relative,
-tilde-home, or absolute). **Click** on the notification opens the dir in VS Code
-and marks the event consumed (same as menu item click).
+tilde-home, or absolute). **Click** on the notification tries **kool** `vscode open --ipc-only --json` first,
+then falls back to **`code <dir>`**; menu clicks use **code** only. Opens mark the
+event consumed. **Notify logs** record `openMethod` (`kool_ipc` vs `code_cli`).
 
 Tests exercise diff/content/click **logic** via helper actions
 (`notification_diff`, `notification_content`, `notification_click`) without
@@ -92,11 +93,16 @@ session-notifications/                   ROOT: Request{Action, Dir, ...}, Respon
     │   ├── subtitle-cwd-relative/       LEAF: cwd=/work, dir=/work/a/b → subtitle "a"
     │   └── subtitle-absolute-parent/    LEAF: dir outside home/cwd → absolute parent
     │
-    └── click/                           DECISION: click handler
-        ├── menu-item-executes-command/  LEAF: menu click → code command only
-        ├── opens-dir-and-consumes/      LEAF: notification click → activate app + code command
-        ├── notification-focuses-target-window/ LEAF: notification → focus VS Code window for dir
-        └── menu-notification-window-parity/    LEAF: menu vs notification same focused window
+    └── click/                           DECISION: click source + open strategy
+        ├── menu-item-executes-command/  LEAF: menu → code only, no kool
+        ├── menu-unchanged-code-only/    LEAF: menu with kool on disk → still code only
+        ├── opens-dir-and-consumes/      LEAF: notification → kool IPC ok → kool command
+        ├── notification-focuses-target-window/ LEAF: notification + kool IPC → focus target dir
+        ├── menu-notification-window-parity/    LEAF: menu code + notification kool → same focus
+        ├── kool-ipc-success/            LEAF: notification kool IPC handled → kool_ipc
+        ├── kool-ipc-fallback-to-code/    LEAF: kool fail → code_cli + fallbackReason
+        ├── kool-missing-fallback/       LEAF: no kool binary → code_cli, kool_missing
+        └── kool-resolve-first-candidate/ LEAF: /usr/bin/kool wins over later candidates
 ```
 
 ## Parameter Ranking (macos-notification)
@@ -106,7 +112,8 @@ session-notifications/                   ROOT: Request{Action, Dir, ...}, Respon
 | 1 | Operation | `notification_diff`, `notification_content`, `notification_click` |
 | 2 | Diff transition | new, multiple-new, dedup-bump, unchanged, consumed-only, baseline |
 | 3 | Content context | basename only, home-tilde, cwd-relative, absolute parent |
-| 4 | Click source | menu_bar → command only; notification → app_activated + command |
+| 4 | Click source | menu_bar → code only; notification → kool IPC probe then optional code fallback |
+| 5 | Kool resolution | binary missing, first candidate path, IPC handled vs not |
 
 ## Test Index
 
@@ -145,8 +152,13 @@ session-notifications/                   ROOT: Request{Action, Dir, ...}, Respon
 | 30 | `macos-notification/content/subtitle-absolute-parent/` | Outside home/cwd → absolute parent |
 | 31 | `macos-notification/click/menu-item-executes-command/` | Menu click → `code` command, no app activation |
 | 32 | `macos-notification/click/opens-dir-and-consumes/` | Notification click → activate app + `code` command |
-| 33 | `macos-notification/click/notification-focuses-target-window/` | Notification click → focus VS Code window for target dir |
-| 34 | `macos-notification/click/menu-notification-window-parity/` | Menu and notification clicks focus same VS Code window |
+| 33 | `macos-notification/click/notification-focuses-target-window/` | Notification + kool IPC → focus VS Code window for target dir |
+| 34 | `macos-notification/click/menu-notification-window-parity/` | Menu (code) and notification (kool) focus same VS Code window |
+| 35 | `macos-notification/click/kool-ipc-success/` | Notification kool IPC ok → `open_method=kool_ipc`, no code fallback |
+| 36 | `macos-notification/click/kool-ipc-fallback-to-code/` | Kool IPC not handled → code CLI + consolidated log fields |
+| 37 | `macos-notification/click/kool-missing-fallback/` | No kool candidate → code CLI, `fallbackReason=kool_missing` |
+| 38 | `macos-notification/click/kool-resolve-first-candidate/` | `/usr/bin/kool` present → resolved path is first candidate |
+| 39 | `macos-notification/click/menu-unchanged-code-only/` | Menu click never attempts kool even when installed |
 
 ## Coverage Map
 
@@ -173,9 +185,11 @@ session-notifications/                   ROOT: Request{Action, Dir, ...}, Respon
 | Subtitle: tilde-home | `content/subtitle-home-tilde` | ✓ |
 | Subtitle: cwd-relative | `content/subtitle-cwd-relative` | ✓ |
 | Subtitle: absolute parent | `content/subtitle-absolute-parent` | ✓ |
-| Click opens dir + consumes | `click/opens-dir-and-consumes` | ✓ |
-| Notification focuses target VS Code window | `click/notification-focuses-target-window` | RED (stale window bug) |
-| Menu/notification window focus parity | `click/menu-notification-window-parity` | RED (stale window bug) |
+| Click opens dir + consumes (kool IPC) | `click/opens-dir-and-consumes` | RED until kool in notification_click |
+| Notification focuses target VS Code window | `click/notification-focuses-target-window` | RED until kool opener in simulator |
+| Menu/notification window focus parity | `click/menu-notification-window-parity` | RED until kool opener in simulator |
+| Kool IPC / fallback / missing / resolve | `click/kool-*` | RED until simulator implements kool path |
+| Menu unchanged (no kool) | `click/menu-unchanged-code-only` | RED until simulator distinguishes sources |
 
 ## How to Run
 
@@ -240,6 +254,11 @@ type Request struct {
 	ClickSource        string   `json:"click_source,omitempty"`
 	VSCodeFrontmostDir string   `json:"vscode_frontmost_dir,omitempty"`
 	VSCodeOpenDirs     []string `json:"vscode_open_dirs,omitempty"`
+	// --- notification kool open (TestVSCodeFocusSimulator) ---
+	KoolPresentPaths []string `json:"kool_present_paths,omitempty"`
+	KoolIPCHandled   bool     `json:"kool_ipc_handled,omitempty"`
+	KoolIPCError     string   `json:"kool_ipc_error,omitempty"`
+	KoolJSONInvalid  bool     `json:"kool_json_invalid,omitempty"`
 }
 
 // Response is parsed from the Swift test helper's stdout.
@@ -265,6 +284,12 @@ type Response struct {
 	WindowOpened     bool   `json:"window_opened,omitempty"`
 	FocusedVSCodeDir     string `json:"focused_vscode_dir,omitempty"`
 	MenuFocusedVSCodeDir string `json:"menu_focused_vscode_dir,omitempty"`
+	OpenMethod           string `json:"open_method,omitempty"`
+	KoolAttempted        bool   `json:"kool_attempted,omitempty"`
+	KoolIpcHandled       bool   `json:"kool_ipc_handled,omitempty"`
+	FallbackReason       string `json:"fallback_reason,omitempty"`
+	CodeExecuted         bool   `json:"code_executed,omitempty"`
+	ResolvedKoolBin      string `json:"resolved_kool_bin,omitempty"`
 }
 
 func Run(t *testing.T, req *Request) (*Response, error) {

@@ -53,11 +53,15 @@ type OpencodeLogDetails struct {
 
 // CommandLogDetails captures command execution details in notify logs.
 type CommandLogDetails struct {
-	Command    string `json:"command"`
-	ExitCode   int    `json:"exitCode"`
-	Stdout     string `json:"stdout"`
-	Stderr     string `json:"stderr"`
-	DurationMs int    `json:"durationMs"`
+	Command        string `json:"command"`
+	ExitCode       int    `json:"exitCode"`
+	Stdout         string `json:"stdout"`
+	Stderr         string `json:"stderr"`
+	DurationMs     int    `json:"durationMs"`
+	OpenMethod     string `json:"openMethod,omitempty"`
+	KoolAttempted  bool   `json:"koolAttempted,omitempty"`
+	KoolIpcHandled bool   `json:"koolIpcHandled,omitempty"`
+	FallbackReason string `json:"fallbackReason,omitempty"`
 }
 
 type store struct {

@@ -213,9 +213,102 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Open session dir: notification clicks try kool IPC first; menu uses `code` only.
+    func openDir(_ dir: String, clickSource: SessionClickSource? = nil) {
+        if clickSource == .notification {
+            openDirViaKoolThenCodeFallback(dir)
+            return
+        }
+        launchCodeCLI(dir: dir, clickSource: clickSource, logMeta: nil)
+    }
+
+    private func openDirViaKoolThenCodeFallback(_ dir: String) {
+        SessionNotificationClickDebug.log("open_dir_launch", [
+            "dir": dir,
+            "kool_candidates": SessionKoolBinary.candidates.joined(separator: ","),
+        ])
+        pushLoadingCursor()
+        let startTime = Date()
+        defer {
+            popLoadingCursor()
+        }
+
+        if let koolBin = SessionKoolBinary.resolve() {
+            let attempt = SessionKoolOpenRunner.run(binary: koolBin, dir: dir)
+            let durationMs = Int(Date().timeIntervalSince(startTime) * 1000)
+            if attempt.ipcHandled {
+                SessionNotificationClickDebug.log("kool_ipc_handled", ["dir": dir, "binary": koolBin])
+                appendNotificationOpenLog(
+                    dir: dir,
+                    command: attempt.commandLine,
+                    exitCode: attempt.exitCode,
+                    stdout: attempt.stdout,
+                    stderr: attempt.stderr,
+                    durationMs: durationMs,
+                    meta: .forKoolSuccess()
+                )
+                return
+            }
+            SessionNotificationClickDebug.log("kool_ipc_fallback", [
+                "dir": dir,
+                "reason": attempt.fallbackReason ?? "unknown",
+            ])
+            launchCodeCLI(
+                dir: dir,
+                clickSource: .notification,
+                logMeta: .forCodeFallback(kool: attempt)
+            )
+            return
+        }
+
+        SessionNotificationClickDebug.log("kool_missing_fallback", ["dir": dir])
+        launchCodeCLI(
+            dir: dir,
+            clickSource: .notification,
+            logMeta: .forCodeFallback(kool: nil)
+        )
+    }
+
+    private func appendNotificationOpenLog(
+        dir: String,
+        command: String,
+        exitCode: Int32,
+        stdout: String,
+        stderr: String,
+        durationMs: Int,
+        meta: SessionNotificationOpenLogMeta
+    ) {
+        let entry = NotifyLogEntry(
+            source: "log",
+            timestamp: Date(),
+            dir: dir,
+            event: "command.executed",
+            pi: nil,
+            opencode: nil,
+            command: NotifyLogEntry.CommandLogDetails(
+                command: command,
+                exitCode: exitCode,
+                stdout: stdout,
+                stderr: stderr,
+                durationMs: durationMs,
+                openMethod: meta.openMethod,
+                koolAttempted: meta.koolAttempted,
+                koolIpcHandled: meta.koolIpcHandled,
+                fallbackReason: meta.fallbackReason
+            )
+        )
+        Task {
+            try? await DaemonClient.shared.appendLog(entry)
+        }
+    }
+
     /// Launch `/usr/local/bin/code <dir>`, show a loading cursor while running
     /// (auto-dismiss after 3 s), and log exit code / stdout / stderr.
-    func openDir(_ dir: String, clickSource: SessionClickSource? = nil) {
+    private func launchCodeCLI(
+        dir: String,
+        clickSource: SessionClickSource?,
+        logMeta: SessionNotificationOpenLogMeta?
+    ) {
         if clickSource == .notification {
             SessionNotificationClickDebug.log("open_dir_launch", [
                 "dir": dir,
@@ -277,6 +370,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     SessionNotificationClickDebug.snapshotContext(step: "after_vscode_activation")
                 }
 
+                var details = NotifyLogEntry.CommandLogDetails(
+                    command: SessionDirCommand.line(for: dir),
+                    exitCode: proc.terminationStatus,
+                    stdout: stdout.trimmingCharacters(in: .whitespacesAndNewlines),
+                    stderr: stderr.trimmingCharacters(in: .whitespacesAndNewlines),
+                    durationMs: durationMs
+                )
+                if let logMeta {
+                    details.openMethod = logMeta.openMethod
+                    details.koolAttempted = logMeta.koolAttempted
+                    details.koolIpcHandled = logMeta.koolIpcHandled
+                    details.fallbackReason = logMeta.fallbackReason
+                }
                 let entry = NotifyLogEntry(
                     source: "log",
                     timestamp: Date(),
@@ -284,13 +390,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     event: "command.executed",
                     pi: nil,
                     opencode: nil,
-                    command: NotifyLogEntry.CommandLogDetails(
-                        command: SessionDirCommand.line(for: dir),
-                        exitCode: proc.terminationStatus,
-                        stdout: stdout.trimmingCharacters(in: .whitespacesAndNewlines),
-                        stderr: stderr.trimmingCharacters(in: .whitespacesAndNewlines),
-                        durationMs: durationMs
-                    )
+                    command: details
                 )
                 Task {
                     try? await DaemonClient.shared.appendLog(entry)
@@ -317,6 +417,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 timeoutWork.cancel()
                 self?.popLoadingCursor()
 
+                var details = NotifyLogEntry.CommandLogDetails(
+                    command: SessionDirCommand.line(for: dir),
+                    exitCode: -1,
+                    stdout: "",
+                    stderr: "failed to launch: \(error.localizedDescription)",
+                    durationMs: 0
+                )
+                if let logMeta {
+                    details.openMethod = logMeta.openMethod
+                    details.koolAttempted = logMeta.koolAttempted
+                    details.koolIpcHandled = logMeta.koolIpcHandled
+                    details.fallbackReason = logMeta.fallbackReason
+                }
                 let entry = NotifyLogEntry(
                     source: "log",
                     timestamp: Date(),
@@ -324,13 +437,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     event: "command.error",
                     pi: nil,
                     opencode: nil,
-                    command: NotifyLogEntry.CommandLogDetails(
-                        command: SessionDirCommand.line(for: dir),
-                        exitCode: -1,
-                        stdout: "",
-                        stderr: "failed to launch: \(error.localizedDescription)",
-                        durationMs: 0
-                    )
+                    command: details
                 )
                 Task {
                     try? await DaemonClient.shared.appendLog(entry)

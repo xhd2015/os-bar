@@ -27,6 +27,8 @@ func Setup(t *testing.T, req *Request) error {
 	req.Dir = "/proj/b"
 	req.VSCodeFrontmostDir = "/proj/a"
 	req.VSCodeOpenDirs = []string{"/proj/a", "/proj/b"}
+	req.KoolPresentPaths = []string{"/usr/local/bin/kool"}
+	req.KoolIPCHandled = true
 	return nil
 }
 ```

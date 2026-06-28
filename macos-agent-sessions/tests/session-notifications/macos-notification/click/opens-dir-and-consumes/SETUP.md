@@ -14,8 +14,10 @@ notification_click(/proj/x) -> app_activated=true, window_opened=false, executed
 
 ```go
 func Setup(t *testing.T, req *Request) error {
-	req.Action = "notification_click"
+	req.Action = "notification_kool_open"
 	req.Dir = "/proj/x"
+	req.KoolPresentPaths = []string{"/usr/local/bin/kool"}
+	req.KoolIPCHandled = true
 	return nil
 }
 ```
