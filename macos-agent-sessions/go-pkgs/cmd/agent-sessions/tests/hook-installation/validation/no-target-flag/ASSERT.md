@@ -1,6 +1,6 @@
 ## Expected
 - `resp.ExitCode == 1`.
-- `resp.Stderr` contains `"at least one of --pi, --opencode, --grok, or --codex is required"`.
+- `resp.Stderr` contains `"at least one of --pi, --opencode, --grok, --codex, or --claude is required"`.
 - No files created under `resp.FakeHome` or `resp.WorkDir`.
 
 ## Side Effects
@@ -19,7 +19,7 @@ func Assert(t *testing.T, req *Request, resp *Response, err error) {
 	if resp.ExitCode != 1 {
 		t.Fatalf("expected exit code 1, got %d", resp.ExitCode)
 	}
-	if !strings.Contains(resp.Stderr, "at least one of --pi, --opencode, --grok, or --codex is required") {
+	if !strings.Contains(resp.Stderr, "at least one of --pi, --opencode, --grok, --codex, or --claude is required") {
 		t.Fatalf("stderr missing required-flag message: %q", resp.Stderr)
 	}
 	assertNoFilesUnderDir(t, resp.FakeHome)

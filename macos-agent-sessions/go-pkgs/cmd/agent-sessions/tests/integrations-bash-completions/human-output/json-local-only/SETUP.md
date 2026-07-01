@@ -3,8 +3,8 @@
 **Feature**: integrations --json --local entries
 
 ```
-# JSON with local filter returns 4 local-scoped entries
-test -> agent-sessions integrations --json --local -> 4 entries scope=local
+# JSON with local filter returns 5 local-scoped entries
+test -> agent-sessions integrations --json --local -> 5 entries scope=local
 ```
 
 ## Steps

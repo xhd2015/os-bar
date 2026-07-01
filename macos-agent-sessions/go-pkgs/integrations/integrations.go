@@ -27,6 +27,9 @@ var grokHooksJSON []byte
 //go:embed scripts/codex-agent-sessions-hooks.json
 var codexHooksJSON []byte
 
+//go:embed scripts/claude-agent-sessions-hooks.json
+var claudeHooksJSON []byte
+
 const (
 	AgentSessionsHookStatus  = "os-bar agent-sessions notify"
 	agentSessionsScriptToken = "__AGENT_SESSIONS_SCRIPT__"
@@ -85,6 +88,7 @@ func ListScopes(includeGlobal, includeLocal bool, homeDir, cwd string) []Integra
 		opencodeIntegrationStatus,
 		piIntegrationStatus,
 		codexIntegrationStatus,
+		claudeIntegrationStatus,
 	}
 	for _, statusFn := range agents {
 		if includeGlobal {
@@ -120,6 +124,8 @@ func Install(target string, global bool, homeDir, cwd string) error {
 		CheckAndWrite("pi extension", targetPath, piExtension, false)
 	case "codex":
 		InstallCodex(global, homeDir, cwd, false)
+	case "claude":
+		InstallClaude(global, homeDir, cwd, false)
 	default:
 		return fmt.Errorf("unknown target %q", target)
 	}
@@ -420,6 +426,228 @@ func InstallCodex(global bool, homeDir, cwd string, dryRun bool) {
 	fmt.Printf("    written\n")
 }
 
+// ClaudeHookPaths returns config and script paths for claude hooks.
+func ClaudeHookPaths(global bool, homeDir, cwd string) (configPath, scriptPath string) {
+	if global {
+		return filepath.Join(homeDir, ".claude", "settings.json"), filepath.Join(homeDir, ".claude", "hooks", "agent-sessions-stop.sh")
+	}
+	return filepath.Join(cwd, ".claude", "settings.json"), filepath.Join(cwd, ".claude", "hooks", "agent-sessions-stop.sh")
+}
+
+// claudeHookCommand builds the command Claude's Stop hook runs. Claude has no
+// per-hook env field, so AGENT_SESSIONS_AGENT=claude is conveyed via the
+// command string in shell-assignment form. The script path is appended bare
+// (mirroring codex/grok, which use the bare absolute path in the command
+// field).
+func claudeHookCommand(scriptPath string) string {
+	return "AGENT_SESSIONS_AGENT=claude " + scriptPath
+}
+
+// MergeClaudeHooks merges our Stop hook into an existing Claude settings.json.
+// It parses existing as a generic map so every top-level key (permissions, env,
+// model, ...) and foreign hook field round-trips untouched. Our handler is
+// identified by statusMessage == AgentSessionsHookStatus and upserted in place;
+// if no matching handler exists a new matcher group is appended under
+// hooks.Stop. Returns pretty-printed JSON with a trailing newline. Returns an
+// error if existing is non-empty and not valid JSON.
+func MergeClaudeHooks(existing, fixtureTemplate []byte, scriptPath string) ([]byte, error) {
+	root := make(map[string]any)
+	if len(bytes.TrimSpace(existing)) > 0 {
+		if err := json.Unmarshal(existing, &root); err != nil {
+			return nil, fmt.Errorf("parse settings.json: %w", err)
+		}
+	}
+
+	ourHandler, err := claudeHandlerFromFixture(fixtureTemplate, scriptPath)
+	if err != nil {
+		return nil, err
+	}
+
+	hooks, _ := root["hooks"].(map[string]any)
+	if hooks == nil {
+		hooks = make(map[string]any)
+	}
+	hooks["Stop"] = upsertClaudeStopGroup(hooks["Stop"], ourHandler)
+	root["hooks"] = hooks
+
+	out, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(out, '\n'), nil
+}
+
+// claudeHandlerFromFixture parses the fixture template and replaces the script
+// placeholder with the real claudeHookCommand, returning the handler map.
+func claudeHandlerFromFixture(fixtureTemplate []byte, scriptPath string) (map[string]any, error) {
+	var fixture map[string]any
+	if err := json.Unmarshal(fixtureTemplate, &fixture); err != nil {
+		return nil, fmt.Errorf("parse claude hooks fixture: %w", err)
+	}
+	fixtureHooks, _ := fixture["hooks"].(map[string]any)
+	if fixtureHooks == nil {
+		return nil, fmt.Errorf("claude hooks fixture missing hooks object")
+	}
+	stopGroups, _ := fixtureHooks["Stop"].([]any)
+	if len(stopGroups) == 0 {
+		return nil, fmt.Errorf("claude hooks fixture missing Stop group")
+	}
+	firstGroup, _ := stopGroups[0].(map[string]any)
+	if firstGroup == nil {
+		return nil, fmt.Errorf("claude hooks fixture Stop group is not an object")
+	}
+	groupHooks, _ := firstGroup["hooks"].([]any)
+	if len(groupHooks) == 0 {
+		return nil, fmt.Errorf("claude hooks fixture missing handler")
+	}
+	handler, _ := groupHooks[0].(map[string]any)
+	if handler == nil {
+		return nil, fmt.Errorf("claude hooks fixture handler is not an object")
+	}
+	handler["command"] = claudeHookCommand(scriptPath)
+	return handler, nil
+}
+
+// upsertClaudeStopGroup replaces the first handler carrying our statusMessage
+// in any Stop group, or appends a new matcher group if none is found. Foreign
+// groups and handlers are preserved.
+func upsertClaudeStopGroup(stopAny any, ourHandler map[string]any) []any {
+	groups, _ := stopAny.([]any)
+	for i, groupRaw := range groups {
+		group, _ := groupRaw.(map[string]any)
+		if group == nil {
+			continue
+		}
+		handlers, _ := group["hooks"].([]any)
+		for j, handlerRaw := range handlers {
+			handler, _ := handlerRaw.(map[string]any)
+			if handler == nil {
+				continue
+			}
+			if sm, _ := handler["statusMessage"].(string); sm == AgentSessionsHookStatus {
+				handlers[j] = ourHandler
+				group["hooks"] = handlers
+				groups[i] = group
+				return groups
+			}
+		}
+	}
+	return append(groups, map[string]any{"hooks": []any{ourHandler}})
+}
+
+// InstallClaude installs the shared stop script and merged Claude settings.json.
+// Mirrors InstallCodex output: "claude hook script", "claude settings: install →
+// / update → / up to date →", "    written". dryRun skips writes.
+func InstallClaude(global bool, homeDir, cwd string, dryRun bool) {
+	configPath, scriptPath := ClaudeHookPaths(global, homeDir, cwd)
+	CheckAndWrite("claude hook script", scriptPath, hookScript, dryRun)
+
+	existing, err := os.ReadFile(configPath)
+	if err != nil && !os.IsNotExist(err) {
+		fmt.Printf("  claude settings: error reading %s: %v\n", displayPath(configPath), err)
+		return
+	}
+
+	merged, err := MergeClaudeHooks(existing, claudeHooksJSON, scriptPath)
+	if err != nil {
+		fmt.Printf("  claude settings: error merging %s: %v\n", displayPath(configPath), err)
+		return
+	}
+
+	existingNorm := strings.ReplaceAll(string(existing), "\r\n", "\n")
+	mergedNorm := strings.ReplaceAll(string(merged), "\r\n", "\n")
+	if existingNorm == mergedNorm {
+		fmt.Printf("  claude settings: up to date → %s\n", displayPath(configPath))
+		return
+	}
+
+	if len(existing) == 0 {
+		fmt.Printf("  claude settings: install → %s\n", displayPath(configPath))
+	} else {
+		fmt.Printf("  claude settings: update → %s\n", displayPath(configPath))
+	}
+	if dryRun {
+		return
+	}
+
+	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+		fmt.Printf("    error: cannot create directory %s: %v\n", displayPath(filepath.Dir(configPath)), err)
+		return
+	}
+	if err := os.WriteFile(configPath, merged, 0644); err != nil {
+		fmt.Printf("    error: cannot write %s: %v\n", displayPath(configPath), err)
+		return
+	}
+	fmt.Printf("    written\n")
+}
+
+func claudeIntegrationStatus(global bool, homeDir, cwd, scope string) IntegrationEntry {
+	configPath, scriptPath := ClaudeHookPaths(global, homeDir, cwd)
+	status := "missing"
+
+	existing, err := os.ReadFile(configPath)
+	if err != nil && !os.IsNotExist(err) {
+		return IntegrationEntry{ID: "claude", Status: "missing", Path: configPath, Scope: scope}
+	}
+
+	if os.IsNotExist(err) {
+		if _, scriptErr := os.ReadFile(scriptPath); scriptErr != nil && os.IsNotExist(scriptErr) {
+			return IntegrationEntry{ID: "claude", Status: "missing", Path: configPath, Scope: scope}
+		}
+		status = "outdated"
+	} else {
+		scriptData, scriptErr := os.ReadFile(scriptPath)
+		scriptOK := scriptErr == nil && contentMatches(scriptData, hookScript)
+		merged, mergeErr := MergeClaudeHooks(existing, claudeHooksJSON, scriptPath)
+		if mergeErr != nil {
+			status = "outdated"
+		} else if scriptOK && claudeHooksCurrent(existing, merged, scriptPath) {
+			status = "up_to_date"
+		} else {
+			status = "outdated"
+		}
+	}
+
+	return IntegrationEntry{ID: "claude", Status: status, Path: configPath, Scope: scope}
+}
+
+// claudeHooksCurrent reports whether the existing settings.json already
+// contains our handler with the exact expected command and the script file
+// matches the embedded hookScript.
+func claudeHooksCurrent(existing, merged []byte, scriptPath string) bool {
+	if contentMatches(existing, merged) {
+		return true
+	}
+	var root map[string]any
+	if err := json.Unmarshal(existing, &root); err != nil {
+		return false
+	}
+	hooks, _ := root["hooks"].(map[string]any)
+	if hooks == nil {
+		return false
+	}
+	wantCmd := claudeHookCommand(scriptPath)
+	stopGroups, _ := hooks["Stop"].([]any)
+	for _, groupRaw := range stopGroups {
+		group, _ := groupRaw.(map[string]any)
+		if group == nil {
+			continue
+		}
+		handlers, _ := group["hooks"].([]any)
+		for _, handlerRaw := range handlers {
+			handler, _ := handlerRaw.(map[string]any)
+			if handler == nil {
+				continue
+			}
+			if sm, _ := handler["statusMessage"].(string); sm == AgentSessionsHookStatus {
+				cmd, _ := handler["command"].(string)
+				return cmd == wantCmd
+			}
+		}
+	}
+	return false
+}
+
 // CheckAndWrite installs or updates a single integration file with CLI output.
 func CheckAndWrite(label string, targetPath string, script []byte, dryRun bool) (written bool) {
 	dir := filepath.Dir(targetPath)
@@ -479,6 +707,11 @@ func CheckAndWrite(label string, targetPath string, script []byte, dryRun bool) 
 // CodexHooksJSON returns the embedded codex hooks fixture template.
 func CodexHooksJSON() []byte {
 	return codexHooksJSON
+}
+
+// ClaudeHooksJSON returns the embedded claude hooks fixture template.
+func ClaudeHooksJSON() []byte {
+	return claudeHooksJSON
 }
 
 // HookScript returns the embedded hook shell script.

@@ -2,7 +2,7 @@
 
 - `resp.ExitCode == 0`.
 - `resp.Stdout` contains header `Integrations (local):`.
-- `resp.Stdout` lists exactly four integrations (grok, opencode, pi, codex) in that order.
+- `resp.Stdout` lists exactly five integrations (grok, opencode, pi, codex, claude) in that order.
 - Rows do not contain scope suffixes `(Global)`, `(Local)`, or `(Global + Local)`.
 - Each row uses a human status label.
 - `resp.Stdout` is not JSON.
@@ -25,8 +25,8 @@ func Assert(t *testing.T, req *Request, resp *Response, err error) {
 	assertNoScopeSuffixes(t, resp.Stdout)
 	assertIntegrationOrder(t, resp.Stdout)
 
-	if n := countIntegrationLines(t, resp.Stdout); n != 4 {
-		t.Fatalf("expected 4 integration rows, got %d; stdout:\n%s", n, resp.Stdout)
+	if n := countIntegrationLines(t, resp.Stdout); n != 5 {
+		t.Fatalf("expected 5 integration rows, got %d; stdout:\n%s", n, resp.Stdout)
 	}
 
 	for _, id := range integrationOrder {

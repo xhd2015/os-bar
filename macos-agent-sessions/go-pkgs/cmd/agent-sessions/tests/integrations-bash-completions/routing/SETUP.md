@@ -17,7 +17,7 @@ agent-sessions integrations --json --global -> JSON status list
 
 ## Context
 
-- Response must be valid JSON with exactly four integration entries (grok, opencode, pi, codex).
+- Response must be valid JSON with exactly five integration entries (grok, opencode, pi, codex, claude).
 
 ```go
 func Setup(t *testing.T, req *Request) error {

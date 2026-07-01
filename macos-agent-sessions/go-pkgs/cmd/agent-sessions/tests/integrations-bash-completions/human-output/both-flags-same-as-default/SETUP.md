@@ -4,7 +4,7 @@
 
 ```
 # both scope flags: same dual-scope listing as default
-test -> agent-sessions integrations --global --local -> Integrations: + 4 collapsed rows
+test -> agent-sessions integrations --global --local -> Integrations: + 5 collapsed rows
 ```
 
 ## Steps

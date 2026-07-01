@@ -105,7 +105,7 @@ integrations-bash-completions/              ROOT: Request{Action, JsonOut, Globa
 │   │
 │   ├── default-both-scopes/                LEAF: integrations (no flags)
 │   │   ├── SETUP → default flags
-│   │   ├── ASSERT → Integrations: header, 4 Missing (Global + Local) rows
+│   │   ├── ASSERT → Integrations: header, 5 Missing (Global + Local) rows
 │   │
 │   ├── local-only/                         LEAF: integrations --local
 │   │   ├── SETUP → Local=true
@@ -149,11 +149,11 @@ integrations-bash-completions/              ROOT: Request{Action, JsonOut, Globa
 │   │
 │   ├── json-local-only/                    LEAF: integrations --json --local
 │   │   ├── SETUP → JsonOut=true, Local=true
-│   │   ├── ASSERT → 4 entries, scope=local
+│   │   ├── ASSERT → 5 entries, scope=local
 │   │
 │   ├── json-still-works/                   LEAF: integrations --json --global
 │   │   ├── SETUP → JsonOut=true, Global=true
-│   │   ├── ASSERT → valid JSON with 4 integrations
+│   │   ├── ASSERT → valid JSON with 5 integrations
 │   │
 │   └── path-shortening/                    DECISION: human path display rules
 │       └── [SETUP] grouping for pathfmt.Short display assertions
@@ -168,7 +168,7 @@ integrations-bash-completions/              ROOT: Request{Action, JsonOut, Globa
     │
     └── integrations-json-unchanged/        LEAF: integrations --json --global
         ├── SETUP → Global=true
-        ├── ASSERT → exit 0, valid JSON with 4 integrations
+        ├── ASSERT → exit 0, valid JSON with 5 integrations
 ```
 
 ## Test Index
@@ -187,7 +187,7 @@ integrations-bash-completions/              ROOT: Request{Action, JsonOut, Globa
 | 10 | `bash-completions/install/dry-run-existing/` | Dry-run on matching file reports up to date |
 | 11 | `bash-completions/install/dry-run-would-update/` | Dry-run on stale file reports would update |
 | 12 | `bash-completions/install/unknown-flag-rejected/` | Unknown flag exits 1 with error |
-| 13 | `human-output/default-both-scopes/` | `integrations` prints 4 collapsed Missing (Global + Local) rows |
+| 13 | `human-output/default-both-scopes/` | `integrations` prints 5 collapsed Missing (Global + Local) rows |
 | 14 | `human-output/local-only/` | `integrations --local` prints local human table |
 | 15 | `human-output/global-only/` | `integrations --global` prints global human table |
 | 16 | `human-output/both-flags-same-as-default/` | `--global --local` same as default |
@@ -197,8 +197,8 @@ integrations-bash-completions/              ROOT: Request{Action, JsonOut, Globa
 | 20 | `human-output/local-only-installed/` | Grok local only → `Up to date (Local)` under dual-scope default |
 | 21 | `human-output/different-statuses-both-installed/` | Grok global up_to_date + local outdated → 2 split rows |
 | 22 | `human-output/mixed-scopes/` | Grok global only → `Up to date (Global)`; others collapsed missing |
-| 23 | `human-output/json-both-scopes/` | `--json` returns 8 global+local entries |
-| 24 | `human-output/json-local-only/` | `--json --local` returns 4 local entries |
+| 23 | `human-output/json-both-scopes/` | `--json` returns 10 global+local entries |
+| 24 | `human-output/json-local-only/` | `--json --local` returns 5 local entries |
 | 25 | `human-output/json-still-works/` | `--json --global` JSON regression from human-output branch |
 | 26 | `human-output/path-shortening/global-tilde-paths/` | `--global` rows show `~/...` not absolute HOME |
 | 27 | `human-output/path-shortening/local-relative-paths/` | `--local` rows show cwd-relative `.foo/...` paths |
@@ -232,8 +232,8 @@ integrations-bash-completions/              ROOT: Request{Action, JsonOut, Globa
 | Local-only installed dual-scope row | `local-only-installed` | ✓ |
 | Split dual-scope rows (different statuses) | `different-statuses-both-installed` | ✓ |
 | Global-only installed dual-scope row | `mixed-scopes` | ✓ |
-| JSON both scopes (8 entries) | `json-both-scopes` | ✓ |
-| JSON local only (4 entries) | `json-local-only` | ✓ |
+| JSON both scopes (10 entries) | `json-both-scopes` | ✓ |
+| JSON local only (5 entries) | `json-local-only` | ✓ |
 | JSON path --global regression | `json-still-works` | ✓ |
 | Human global paths shortened to ~/ | `global-tilde-paths`, all global-scope human leaves | ✓ |
 | Human local paths cwd-relative | `local-relative-paths`, `local-only` | ✓ |

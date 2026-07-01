@@ -20,7 +20,7 @@ agent-sessions integrations bash-completions --install --dry-run -> would instal
 
 ## Context
 
-- JSON response must list exactly four integrations (grok, opencode, pi, codex).
+- JSON response must list exactly five integrations (grok, opencode, pi, codex, claude).
 - Bash-completions dry-run must not write files under fakeHome.
 
 ```go

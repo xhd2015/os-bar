@@ -25,14 +25,14 @@ _agent_sessions() {
             COMPREPLY=($(compgen -W "-h --help" -- "${cur}"))
             ;;
         install)
-            COMPREPLY=($(compgen -W "--pi --opencode --grok --codex --dry-run --global -h --help" -- "${cur}"))
+            COMPREPLY=($(compgen -W "--pi --opencode --grok --codex --claude --dry-run --global -h --help" -- "${cur}"))
             ;;
         integrations)
             if [[ ${COMP_CWORD} -eq 2 ]]; then
-                COMPREPLY=($(compgen -W "bash-completions codex grok pi opencode --json --global --local -h --help" -- "${cur}"))
+                COMPREPLY=($(compgen -W "bash-completions codex grok pi opencode claude --json --global --local -h --help" -- "${cur}"))
             elif [[ ${COMP_CWORD} -ge 3 && "${COMP_WORDS[2]}" == "bash-completions" ]]; then
                 COMPREPLY=($(compgen -W "--install --dry-run -h --help" -- "${cur}"))
-            elif [[ ${COMP_CWORD} -ge 3 && "${COMP_WORDS[2]}" =~ ^(codex|grok|pi|opencode)$ ]]; then
+            elif [[ ${COMP_CWORD} -ge 3 && "${COMP_WORDS[2]}" =~ ^(codex|grok|pi|opencode|claude)$ ]]; then
                 COMPREPLY=($(compgen -W "--install --dry-run --global -h --help" -- "${cur}"))
             else
                 COMPREPLY=($(compgen -W "--json --global --local -h --help" -- "${cur}"))

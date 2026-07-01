@@ -1,7 +1,7 @@
 ## Expected
 
 - `resp.ExitCode == 0`.
-- `resp.Stdout` matches default dual-scope output: bare `Integrations:` header and four `Missing (Global + Local)` rows in agent order.
+- `resp.Stdout` matches default dual-scope output: bare `Integrations:` header and five `Missing (Global + Local)` rows in agent order.
 
 ## Exit Code
 

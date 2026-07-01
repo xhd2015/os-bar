@@ -1,8 +1,9 @@
 # Agent-Sessions Install — Doc-Style Test Tree
 
 Test suite for the `agent-sessions install` subcommand. Validates hook/script
-installation for grok, codex, opencode, and pi; codex merge semantics; dry-run
-behavior; idempotency; CLI validation; and hook-script fallback chain content.
+installation for grok, codex, opencode, pi, and claude; codex/claude merge
+semantics; dry-run behavior; idempotency; CLI validation; and hook-script
+fallback chain content.
 
 All tests run in isolated temporary `HOME` and workspace directories — never
 the real user home.
@@ -15,9 +16,16 @@ the real user home.
 # DSN (Domain Specific Notion)
 
 The **CLI binary** runs `agent-sessions install` with agent flags (`--grok`, `--codex`,
-`--pi`, `--opencode`). The **install logic** writes hook/config files under isolated
+`--pi`, `--opencode`, `--claude`). The **install logic** writes hook/config files under isolated
 `fakeHome` (global) or `workDir` (local). Tests snapshot filesystem state and validate
 stdout, exit codes, merge semantics, and idempotency — never the real user home.
+
+Claude differs from codex in two ways: (1) its config is a full `settings.json` that
+holds many top-level keys (`permissions`, `env`, `model`, …), so the merge must
+preserve every top-level key and only upsert the `Stop` handler; (2) Claude has no
+per-hook `env` field, so `AGENT_SESSIONS_AGENT=claude` is conveyed via the command
+string (`AGENT_SESSIONS_AGENT=claude '<script>'`). The shared `agent-sessions-stop.sh`
+script is unchanged.
 
 ## Decision Tree
 
@@ -96,6 +104,39 @@ hook-installation/                         ROOT: Request{Action, Target, Global,
 │           ├── SETUP → PreExistingHooksJSON = "{not json"
 │           ├── ASSERT → stdout reports merge error, hooks.json unchanged
 │
+├── claude/                                DECISION: Target = "claude"
+│   └── [SETUP] req.Target = "claude"
+│   │
+│   ├── empty-hooks/                       DECISION: fresh install (no pre-existing settings.json)
+│   │   └── [SETUP] PreExistingHooksJSON = ""
+│   │   │
+│   │   ├── local/                         LEAF: --claude local, empty settings
+│   │   │   ├── SETUP → Global=false
+│   │   │   ├── ASSERT → settings.json + script under workDir, our Stop only, AGENT_SESSIONS_AGENT=claude, no env
+│   │   │
+│   │   ├── global/                        LEAF: --claude --global, empty settings
+│   │   │   ├── SETUP → Global=true
+│   │   │   ├── ASSERT → files under fakeHome/.claude/
+│   │   │
+│   │   └── dry-run/                       LEAF: --claude --dry-run, empty settings
+│   │       ├── SETUP → DryRun=true
+│   │       ├── ASSERT → stdout reports install, settings.json MISSING
+│   │
+│   └── merge/                             DECISION: pre-seeded settings.json
+│       └── [SETUP] loads testdata fixtures into PreExistingHooksJSON
+│       │
+│       ├── preserves-top-level/           LEAF: permissions/env/model + foreign hooks preserved
+│       │   ├── SETUP → testdata/claude-foreign-settings.json
+│       │   ├── ASSERT → top-level keys intact, foreign hooks intact, our Stop present
+│       │
+│       ├── upsert-ours/                   LEAF: stale our entry updated, no duplicate
+│       │   ├── SETUP → testdata/claude-old-agent-sessions.json
+│       │   ├── ASSERT → exactly 1 our Stop, command updated, /old/path.sh gone
+│       │
+│       └── malformed-preexisting/         LEAF: invalid JSON → merge error, no corruption
+│           ├── SETUP → PreExistingHooksJSON = "{not json"
+│           ├── ASSERT → stdout reports merge error, settings.json unchanged
+│
 ├── opencode/                              DECISION: Target = "opencode"
 │   └── [SETUP] req.Target = "opencode"
 │   │
@@ -139,10 +180,16 @@ hook-installation/                         ROOT: Request{Action, Target, Global,
 | 11 | `codex/merge/upsert-ours/` | Merge upserts our Stop entry, updates command path |
 | 12 | `codex/merge/empty-hooks-object/` | Empty hooks object gets our Stop entry |
 | 13 | `codex/merge/malformed-preexisting/` | Malformed pre-existing JSON → error, no write |
-| 14 | `opencode/local-no-warning/` | Local opencode install has no `/config add plugin` hint |
-| 15 | `opencode/global-install/` | Global opencode plugin under fakeHome |
-| 16 | `pi/local-install/` | Local pi extension smoke test |
-| 17 | `script-content/hook-script-fallback-chain/` | Stop script contains jq/python3/node/grep markers |
+| 14 | `claude/empty-hooks/local/` | Fresh local claude install creates settings.json + script |
+| 15 | `claude/empty-hooks/global/` | Fresh global claude install under fakeHome |
+| 16 | `claude/empty-hooks/dry-run/` | Claude dry-run reports install, settings.json not created |
+| 17 | `claude/merge/preserves-top-level/` | Merge preserves top-level keys + foreign hooks, appends our Stop |
+| 18 | `claude/merge/upsert-ours/` | Merge upserts our Stop entry, updates command |
+| 19 | `claude/merge/malformed-preexisting/` | Malformed pre-existing settings → error, no write |
+| 20 | `opencode/local-no-warning/` | Local opencode install has no `/config add plugin` hint |
+| 21 | `opencode/global-install/` | Global opencode plugin under fakeHome |
+| 22 | `pi/local-install/` | Local pi extension smoke test |
+| 23 | `script-content/hook-script-fallback-chain/` | Stop script contains jq/python3/node/grep markers |
 
 ## Coverage Map
 
@@ -161,6 +208,12 @@ hook-installation/                         ROOT: Request{Action, Target, Global,
 | Codex merge upserts our entry | `codex/merge/upsert-ours` | ✓ |
 | Codex merge into empty hooks object | `codex/merge/empty-hooks-object` | ✓ |
 | Codex merge malformed JSON handling | `codex/merge/malformed-preexisting` | ✓ |
+| Claude fresh local install | `claude/empty-hooks/local` | ✓ |
+| Claude fresh global install (isolated HOME) | `claude/empty-hooks/global` | ✓ |
+| Claude dry-run (no write) | `claude/empty-hooks/dry-run` | ✓ |
+| Claude merge preserves top-level keys + foreign hooks | `claude/merge/preserves-top-level` | ✓ |
+| Claude merge upserts our entry | `claude/merge/upsert-ours` | ✓ |
+| Claude merge malformed JSON handling | `claude/merge/malformed-preexisting` | ✓ |
 | OpenCode local (no stale warning) | `opencode/local-no-warning` | ✓ |
 | OpenCode global install | `opencode/global-install` | ✓ |
 | Pi local smoke install | `pi/local-install` | ✓ |
@@ -195,7 +248,7 @@ const agentSessionsHookStatus = "os-bar agent-sessions notify"
 // Request drives a single install invocation. Defined only at root; descendants must not redefine.
 type Request struct {
 	Action               string // "install"
-	Target               string // "grok" | "codex" | "pi" | "opencode" | ""
+	Target               string // "grok" | "codex" | "pi" | "opencode" | "claude" | ""
 	Global               bool
 	DryRun               bool
 	PreExistingHooksJSON     string // write to hooks.json before install (codex merge tests)
@@ -238,7 +291,7 @@ func Run(t *testing.T, req *Request) (*Response, error) {
 	t.Setenv("HOME", fakeHome)
 
 	if req.PreExistingHooksJSON != "" {
-		hooksPath := codexHooksJSONPath(req.Global, fakeHome, workDir)
+		hooksPath := preExistingConfigPath(req.Target, req.Global, fakeHome, workDir)
 		if err := os.MkdirAll(filepath.Dir(hooksPath), 0755); err != nil {
 			return nil, fmt.Errorf("mkdir preexisting hooks dir: %w", err)
 		}
@@ -320,11 +373,23 @@ func buildInstallArgs(req *Request) []string {
 	return args
 }
 
-func codexHooksJSONPath(global bool, fakeHome, workDir string) string {
+// preExistingConfigPath returns the config file path a merge test pre-seeds
+// before running install. Codex pre-seeds <base>/.codex/hooks.json; claude
+// pre-seeds <base>/.claude/settings.json. Other targets return "" (no
+// pre-seed). Codex behavior is byte-identical to the former codexHooksJSONPath.
+func preExistingConfigPath(target string, global bool, fakeHome, workDir string) string {
+	base := workDir
 	if global {
-		return filepath.Join(fakeHome, ".codex", "hooks.json")
+		base = fakeHome
 	}
-	return filepath.Join(workDir, ".codex", "hooks.json")
+	switch target {
+	case "codex":
+		return filepath.Join(base, ".codex", "hooks.json")
+	case "claude":
+		return filepath.Join(base, ".claude", "settings.json")
+	default:
+		return ""
+	}
 }
 
 func expectedPaths(req *Request, fakeHome, workDir string) []string {
@@ -345,6 +410,11 @@ func expectedPaths(req *Request, fakeHome, workDir string) []string {
 		return []string{
 			filepath.Join(base, ".codex", "hooks.json"),
 			filepath.Join(base, ".codex", "hooks", "agent-sessions-stop.sh"),
+		}
+	case "claude":
+		return []string{
+			filepath.Join(base, ".claude", "settings.json"),
+			filepath.Join(base, ".claude", "hooks", "agent-sessions-stop.sh"),
 		}
 	case "opencode":
 		if req.Global {

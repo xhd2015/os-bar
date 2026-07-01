@@ -18,7 +18,7 @@ func cmdIntegrations(args []string) {
 
 	helpText := `Usage: agent-sessions integrations [flags] [subcommand]
 
-Report install status for grok, opencode, pi, and codex integrations.
+Report install status for grok, opencode, pi, codex, and claude integrations.
 By default both global and project-local scopes are listed.
 
 Flags:
@@ -57,7 +57,7 @@ Examples:
 		case "bash-completions":
 			cmdIntegrationsBashCompletions(remainArgs[1:])
 			return
-		case "codex", "grok", "pi", "opencode":
+		case "codex", "grok", "pi", "opencode", "claude":
 			cmdIntegrationsAgent(remainArgs[0], remainArgs[1:])
 			return
 		default:
@@ -174,12 +174,13 @@ func cmdInstall(args []string) {
 	var showOpencode bool
 	var showGrok bool
 	var showCodex bool
+	var showClaude bool
 	var dryRun bool
 	var global bool
 
 	helpText := `Usage: agent-sessions install [flags]
 
-Install or update integration scripts for pi, opencode, grok, and codex.
+Install or update integration scripts for pi, opencode, grok, codex, and claude.
 Checks whether the bundled script is already installed and compares content.
 
 Flags:
@@ -187,12 +188,14 @@ Flags:
   --opencode      install/check opencode plugin
   --grok          install/check grok Stop notification hook
   --codex         install/check codex Stop notification hook
+  --claude        install/check claude Stop notification hook
   --dry-run       check status only, do not write files
   --global        install to global dir
                   pi: ~/.pi/agent/extensions/
                   opencode: ~/.config/opencode/plugins/
                   grok: ~/.grok/hooks/
                   codex: ~/.codex/
+                  claude: ~/.claude/
                   default: project-local
   -h, --help      show help
 `
@@ -201,6 +204,7 @@ Flags:
 		Bool("--opencode", &showOpencode).
 		Bool("--grok", &showGrok).
 		Bool("--codex", &showCodex).
+		Bool("--claude", &showClaude).
 		Bool("--dry-run", &dryRun).
 		Bool("--global", &global).
 		Help("-h,--help", helpText).
@@ -211,8 +215,8 @@ Flags:
 		os.Exit(1)
 	}
 
-	if !showPi && !showOpencode && !showGrok && !showCodex {
-		fmt.Fprintf(os.Stderr, "error: at least one of --pi, --opencode, --grok, or --codex is required\n")
+	if !showPi && !showOpencode && !showGrok && !showCodex && !showClaude {
+		fmt.Fprintf(os.Stderr, "error: at least one of --pi, --opencode, --grok, --codex, or --claude is required\n")
 		os.Exit(1)
 	}
 
@@ -250,5 +254,9 @@ Flags:
 
 	if showCodex {
 		integrations.InstallCodex(global, homeDir, cwd, dryRun)
+	}
+
+	if showClaude {
+		integrations.InstallClaude(global, homeDir, cwd, dryRun)
 	}
 }

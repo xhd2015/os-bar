@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__AGENT_SESSIONS_SCRIPT__",
+            "timeout": 10,
+            "statusMessage": "os-bar agent-sessions notify"
+          }
+        ]
+      }
+    ]
+  }
+}

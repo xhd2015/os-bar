@@ -16,6 +16,7 @@ func agentHelpText(agent string) string {
 		"grok":     "Install or update grok Stop notification hook.",
 		"pi":       "Install or update pi extension.",
 		"opencode": "Install or update opencode plugin.",
+		"claude":   "Install or update claude Stop notification hook.",
 	}
 	desc := descriptions[agent]
 	return fmt.Sprintf(`Usage: agent-sessions integrations %s [flags]
@@ -99,6 +100,13 @@ func cmdIntegrationsAgent(agent string, args []string) {
 			fmt.Println()
 			fmt.Println("  To install globally, run:")
 			fmt.Printf("    agent-sessions integrations codex --install --global\n")
+		}
+	case "claude":
+		integrations.InstallClaude(global, homeDir, cwd, dryRun)
+		if !global && !dryRun {
+			fmt.Println()
+			fmt.Println("  To install globally, run:")
+			fmt.Printf("    agent-sessions integrations claude --install --global\n")
 		}
 	case "grok":
 		integrations.InstallGrok(global, homeDir, cwd, dryRun)

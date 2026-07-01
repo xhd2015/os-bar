@@ -3,7 +3,7 @@
 - `resp.ExitCode == 0`.
 - `resp.Stderr` does not contain `--json is required`.
 - `resp.Stdout` contains bare header `Integrations:` (not `Integrations (local):` or `Integrations (global):`).
-- `resp.Stdout` lists four integration rows in order grok, opencode, pi, codex.
+- `resp.Stdout` lists five integration rows in order grok, opencode, pi, codex, claude.
 - Each row uses human label `Missing (Global + Local)` with the global install path only.
 - `resp.Stdout` is not JSON.
 

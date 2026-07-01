@@ -1,9 +1,9 @@
 ## Expected
 
 - `resp.ExitCode == 0`.
-- `resp.Stdout` is valid JSON with an `integrations` array of length 8.
+- `resp.Stdout` is valid JSON with an `integrations` array of length 10.
 - Entries include both `scope: "global"` and `scope: "local"`.
-- Each of grok, opencode, pi, codex appears twice (once per scope).
+- Each of grok, opencode, pi, codex, claude appears twice (once per scope).
 - `resp.Stdout` does not contain human table header `Integrations (`.
 
 ## Exit Code
@@ -23,7 +23,7 @@ func Assert(t *testing.T, req *Request, resp *Response, err error) {
 		t.Fatalf("JSON mode stdout must not contain human table header; got:\n%s", resp.Stdout)
 	}
 
-	assertJSONScopes(t, resp.Stdout, 8, map[string]bool{"global": true, "local": true})
+	assertJSONScopes(t, resp.Stdout, 10, map[string]bool{"global": true, "local": true})
 
 	idCounts := make(map[string]int)
 	out := parseIntegrationsJSON(t, resp.Stdout)

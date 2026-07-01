@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git:*)"
+    ]
+  },
+  "env": {
+    "CLAUDE_CODE_API_KEY": "sk-foreign"
+  },
+  "model": "claude-sonnet",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/other.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/skynet.sh",
+            "statusMessage": "skynet stop"
+          }
+        ]
+      }
+    ]
+  }
+}

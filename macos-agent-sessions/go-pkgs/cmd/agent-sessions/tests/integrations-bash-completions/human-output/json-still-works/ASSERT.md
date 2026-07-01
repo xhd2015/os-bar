@@ -1,8 +1,8 @@
 ## Expected
 
 - `resp.ExitCode == 0`.
-- `resp.Stdout` is valid JSON with an `integrations` array of length 4.
-- Integration IDs include grok, opencode, pi, and codex.
+- `resp.Stdout` is valid JSON with an `integrations` array of length 5.
+- Integration IDs include grok, opencode, pi, codex, and claude.
 - `resp.Stdout` does not contain human table header `Integrations (`.
 
 ## Exit Code
@@ -23,11 +23,11 @@ func Assert(t *testing.T, req *Request, resp *Response, err error) {
 	}
 
 	out := parseIntegrationsJSON(t, resp.Stdout)
-	if len(out.Integrations) != 4 {
-		t.Fatalf("expected 4 integrations, got %d: %v", len(out.Integrations), out.Integrations)
+	if len(out.Integrations) != 5 {
+		t.Fatalf("expected 5 integrations, got %d: %v", len(out.Integrations), out.Integrations)
 	}
 
-	wantIDs := map[string]bool{"grok": false, "opencode": false, "pi": false, "codex": false}
+	wantIDs := map[string]bool{"grok": false, "opencode": false, "pi": false, "codex": false, "claude": false}
 	for _, entry := range out.Integrations {
 		if _, ok := wantIDs[entry.ID]; ok {
 			wantIDs[entry.ID] = true

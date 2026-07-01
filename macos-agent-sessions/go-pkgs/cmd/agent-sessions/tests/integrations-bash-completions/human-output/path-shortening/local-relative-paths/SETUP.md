@@ -20,7 +20,7 @@ human formatter -> pathfmt.Short -> .foo/... on stdout
 
 ## Context
 
-- All four agents are `Missing` with local paths only.
+- All five agents are `Missing` with local paths only.
 - Expected display paths are cwd-relative and must not contain `resp.WorkDir`.
 
 ```go

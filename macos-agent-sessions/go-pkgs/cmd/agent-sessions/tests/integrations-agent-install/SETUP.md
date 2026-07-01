@@ -125,6 +125,11 @@ func expectedAgentPaths(req *Request, fakeHome, workDir string) []string {
 			filepath.Join(base, ".codex", "hooks.json"),
 			filepath.Join(base, ".codex", "hooks", "agent-sessions-stop.sh"),
 		}
+	case "claude":
+		return []string{
+			filepath.Join(base, ".claude", "settings.json"),
+			filepath.Join(base, ".claude", "hooks", "agent-sessions-stop.sh"),
+		}
 	case "opencode":
 		if req.Global {
 			return []string{filepath.Join(fakeHome, ".config", "opencode", "plugins", "agent-sessions.ts")}
@@ -342,6 +347,50 @@ func assertCodexGlobalHint(t *testing.T, stdout string) {
 }
 
 func assertNoCodexGlobalHint(t *testing.T, stdout string) {
+	t.Helper()
+	if strings.Contains(stdout, "To install globally, run:") {
+		t.Fatalf("stdout must not contain global install hint; got:\n%s", stdout)
+	}
+}
+
+// --- claude-specific helpers (mirror codex; kept separate to avoid codex regressions) ---
+
+const claudeGlobalHintCommand = "agent-sessions integrations claude --install --global"
+
+func claudeSettingsPath(resp *Response, global bool) string {
+	base := resp.WorkDir
+	if global {
+		base = resp.FakeHome
+	}
+	return filepath.Join(base, ".claude", "settings.json")
+}
+
+func claudeScriptPath(resp *Response, global bool) string {
+	base := resp.WorkDir
+	if global {
+		base = resp.FakeHome
+	}
+	return filepath.Join(base, ".claude", "hooks", "agent-sessions-stop.sh")
+}
+
+func assertClaudeInstallStdoutShortened(t *testing.T, stdout string, resp *Response, global bool) {
+	t.Helper()
+	assertStdoutContainsShortenedPath(t, stdout, claudeScriptPath(resp, global), resp)
+	assertStdoutContainsShortenedPath(t, stdout, claudeSettingsPath(resp, global), resp)
+	assertNoAbsoluteTempPaths(t, stdout, resp)
+}
+
+func assertClaudeGlobalHint(t *testing.T, stdout string) {
+	t.Helper()
+	if !strings.Contains(stdout, "To install globally, run:") {
+		t.Fatalf("stdout missing global install hint; got:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, claudeGlobalHintCommand) {
+		t.Fatalf("stdout missing hint command %q; got:\n%s", claudeGlobalHintCommand, stdout)
+	}
+}
+
+func assertNoClaudeGlobalHint(t *testing.T, stdout string) {
 	t.Helper()
 	if strings.Contains(stdout, "To install globally, run:") {
 		t.Fatalf("stdout must not contain global install hint; got:\n%s", stdout)

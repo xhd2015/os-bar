@@ -1,0 +1,17 @@
+# Scenario
+
+## Steps
+1. Set `PreExistingHooksJSON` to invalid JSON `{not json`.
+2. Call `Run(t, req)` with local claude install.
+
+## Context
+- Malformed pre-existing settings.json should produce a merge error without corrupting the file.
+
+```go
+func Setup(t *testing.T, req *Request) error {
+	req.PreExistingHooksJSON = "{not json"
+	req.Target = "claude"
+	req.Global = false
+	return nil
+}
+```

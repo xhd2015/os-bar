@@ -3,7 +3,7 @@
 **Feature**: integrations --json --global unchanged
 
 ```
-test -> agent-sessions integrations --json --global -> 4 integrations JSON
+test -> agent-sessions integrations --json --global -> 5 integrations JSON
 ```
 
 ## Steps
@@ -12,7 +12,7 @@ test -> agent-sessions integrations --json --global -> 4 integrations JSON
 
 ## Context
 
-- All four integration IDs must be present in the JSON envelope.
+- All five integration IDs must be present in the JSON envelope.
 
 ```go
 func Setup(t *testing.T, req *Request) error {

@@ -13,7 +13,7 @@ agent-sessions integrations --json --global -> JSON integrations list
 
 ## Context
 
-- Response must be valid JSON with exactly four integration entries.
+- Response must be valid JSON with exactly five integration entries.
 
 ```go
 func Setup(t *testing.T, req *Request) error {

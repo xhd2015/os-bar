@@ -227,7 +227,7 @@ func parseIntegrationsJSON(t *testing.T, stdout string) struct {
 	return out
 }
 
-var integrationOrder = []string{"grok", "opencode", "pi", "codex"}
+var integrationOrder = []string{"grok", "opencode", "pi", "codex", "claude"}
 
 var knownHumanStatusLabels = []string{"Missing", "Up to date", "Outdated"}
 
@@ -364,6 +364,8 @@ func integrationGlobalPath(resp *Response, id string) string {
 		return filepath.Join(resp.FakeHome, ".pi", "agent", "extensions", "agent-sessions-hook.ts")
 	case "codex":
 		return filepath.Join(resp.FakeHome, ".codex", "hooks.json")
+	case "claude":
+		return filepath.Join(resp.FakeHome, ".claude", "settings.json")
 	default:
 		return ""
 	}
@@ -379,6 +381,8 @@ func integrationLocalPath(resp *Response, id string) string {
 		return filepath.Join(resp.WorkDir, ".pi", "extensions", "agent-sessions-hook.ts")
 	case "codex":
 		return filepath.Join(resp.WorkDir, ".codex", "hooks.json")
+	case "claude":
+		return filepath.Join(resp.WorkDir, ".claude", "settings.json")
 	default:
 		return ""
 	}
@@ -409,8 +413,8 @@ func assertDualScopeAllMissing(t *testing.T, stdout string, resp *Response) {
 	t.Helper()
 	assertDualScopeHeader(t, stdout)
 	rows := integrationTableRows(stdout)
-	if len(rows) != 4 {
-		t.Fatalf("expected 4 dual-scope rows (4 agents, both scopes missing), got %d; stdout:\n%s", len(rows), stdout)
+	if len(rows) != 5 {
+		t.Fatalf("expected 5 dual-scope rows (5 agents, both scopes missing), got %d; stdout:\n%s", len(rows), stdout)
 	}
 	for i, id := range integrationOrder {
 		if i >= len(rows) {

@@ -11,7 +11,7 @@
 1. Create `fakeHome := filepath.Join(t.TempDir(), "home")` and `workDir := filepath.Join(t.TempDir(), "proj")`; `MkdirAll` both with mode `0755`.
 2. Build the CLI **before** overriding `HOME` (avoids go telemetry writes into fakeHome).
 3. `t.Setenv("HOME", fakeHome)` — required before running install; install `cmd.Env` inherits this override.
-4. If `req.PreExistingHooksJSON` is non-empty, write it to the codex `hooks.json` path (global → `fakeHome/.codex/hooks.json`, local → `workDir/.codex/hooks.json`) before running install.
+4. If `req.PreExistingHooksJSON` is non-empty, write it to the target's config path (codex → `<base>/.codex/hooks.json`, claude → `<base>/.claude/settings.json`; `base` is `fakeHome` for global, `workDir` for local) before running install.
 5. If `req.PreExistingGrokHooksJSON` is non-empty, write it to `<base>/.grok/hooks/<PreExistingGrokHookFile>` before running install.
 6. Construct install args from `req` and run `<binary> install ...` with `cmd.Dir = workDir` and `cmd.Env = os.Environ()`.
 7. If `req.RunTwice`, run install a second time; store second-run stdout in `StdoutSecond`.
@@ -20,10 +20,11 @@
 
 ## Context
 - `Action` is always `"install"` for this suite.
-- `Target` is one of `"grok"`, `"codex"`, `"pi"`, `"opencode"`, or empty (validation only).
-- Codex merge tests pre-seed `hooks.json` via `PreExistingHooksJSON` or load fixtures from `testdata/`.
+- `Target` is one of `"grok"`, `"codex"`, `"pi"`, `"opencode"`, `"claude"`, or empty (validation only).
+- Codex/claude merge tests pre-seed their config (`hooks.json` / `settings.json`) via `PreExistingHooksJSON` or load fixtures from `testdata/`.
 - Grok coexistence tests pre-seed a separate hook file via `PreExistingGrokHookFile` + `PreExistingGrokHooksJSON`.
 - Agent-sessions hook entries use `statusMessage: "os-bar agent-sessions notify"`.
 - Codex `mergeCodexHooks` preserves foreign hooks; only our statusMessage entries are upserted.
+- Claude `MergeClaudeHooks` preserves ALL top-level keys (`permissions`, `env`, `model`, …) and foreign hooks; only our `Stop` handler (identified by statusMessage) is upserted. Claude has no per-hook `env`; the agent id is conveyed via the `AGENT_SESSIONS_AGENT=claude '<script>'` command prefix.
 - OpenCode local installs must not print the stale `/config add plugin` hint (that hint is global-only).
 - `.sh` hook scripts are installed with mode `0755`.

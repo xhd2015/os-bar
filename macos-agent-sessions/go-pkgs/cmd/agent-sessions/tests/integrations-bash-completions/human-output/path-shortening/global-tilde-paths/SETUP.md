@@ -20,7 +20,7 @@ human formatter -> pathfmt.Short -> ~/... on stdout
 
 ## Context
 
-- All four agents are `Missing` with global paths only.
+- All five agents are `Missing` with global paths only.
 - Expected display paths start with `~` and must not contain `resp.FakeHome`.
 
 ```go

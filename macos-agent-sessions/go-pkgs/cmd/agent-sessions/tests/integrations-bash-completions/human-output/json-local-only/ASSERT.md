@@ -1,9 +1,9 @@
 ## Expected
 
 - `resp.ExitCode == 0`.
-- `resp.Stdout` is valid JSON with an `integrations` array of length 4.
+- `resp.Stdout` is valid JSON with an `integrations` array of length 5.
 - Every entry has `scope: "local"`.
-- Integration IDs include grok, opencode, pi, and codex.
+- Integration IDs include grok, opencode, pi, codex, and claude.
 - `resp.Stdout` does not contain human table header.
 
 ## Exit Code
@@ -23,9 +23,9 @@ func Assert(t *testing.T, req *Request, resp *Response, err error) {
 		t.Fatalf("JSON mode stdout must not contain human table header; got:\n%s", resp.Stdout)
 	}
 
-	assertJSONScopes(t, resp.Stdout, 4, map[string]bool{"local": true})
+	assertJSONScopes(t, resp.Stdout, 5, map[string]bool{"local": true})
 
-	wantIDs := map[string]bool{"grok": false, "opencode": false, "pi": false, "codex": false}
+	wantIDs := map[string]bool{"grok": false, "opencode": false, "pi": false, "codex": false, "claude": false}
 	out := parseIntegrationsJSON(t, resp.Stdout)
 	for _, entry := range out.Integrations {
 		if _, ok := wantIDs[entry.ID]; ok {
