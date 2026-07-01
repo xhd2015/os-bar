@@ -279,6 +279,16 @@ func (s *store) markConsumed(dir string) {
 	}
 }
 
+// markAllConsumed sets consumed=true on every event, saving once.
+func (s *store) markAllConsumed() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.events {
+		s.events[i].Consumed = true
+	}
+	_ = s.saveEventsLocked()
+}
+
 func (s *store) removeEvents(dir string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()

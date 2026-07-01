@@ -57,7 +57,13 @@ struct SessionEvent: Codable, Equatable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(UUID.self, forKey: .id)
+        if let raw = try? container.decode(UUID.self, forKey: .id) {
+            id = raw
+        } else {
+            // Tolerate non-UUID id strings (e.g. "e1") used by some test trees;
+            // fall back to a nil UUID since id is never asserted in those cases.
+            id = UUID(uuidString: "00000000-0000-0000-0000-000000000000") ?? UUID()
+        }
         dir = try container.decode(String.self, forKey: .dir)
         timestamp = try container.decode(Date.self, forKey: .timestamp)
         consumed = try container.decodeIfPresent(Bool.self, forKey: .consumed) ?? false
@@ -248,6 +254,9 @@ struct Response: Codable {
     // --- session menu item response fields ---
     var display_label: String = ""
     var menu_tooltip: String = ""
+    // --- mark all read response fields ---
+    var button_label: String = ""
+    var button_enabled: Bool = false
     // --- vscode window focus click response fields ---
     var focused_vscode_dir: String = ""
     var menu_focused_vscode_dir: String = ""
@@ -791,6 +800,11 @@ enum TestSessionMenuItemFormatter {
         let padded = name.padding(toLength: 22, withPad: " ", startingAt: 0)
         return "\(dot)\(padded) \(relativeTime)"
     }
+}
+
+enum TestMarkAllReadState {
+    static let label = "Mark All Read"
+    static func buttonEnabled(unconsumedCount: Int) -> Bool { unconsumedCount > 0 }
 }
 
 enum TestLogsEntryFormatter {
@@ -1539,6 +1553,18 @@ func runHelper() -> Never {
             relativeTime: relativeTime
         )
         response.menu_tooltip = TestSessionMenuItemFormatter.tooltip(dir: dir)
+
+    case "mark_all_read_state":
+        let store = TestSessionStore()
+        if let eventsJSON = request.events_json,
+           let data = eventsJSON.data(using: .utf8),
+           let preloaded = try? makeJSONDecoder().decode([SessionEvent].self, from: data) {
+            store.events = preloaded
+        }
+        let unconsumed = store.unconsumedCount
+        response.unconsumed_count = unconsumed
+        response.button_label = TestMarkAllReadState.label
+        response.button_enabled = TestMarkAllReadState.buttonEnabled(unconsumedCount: unconsumed)
 
     case "logs_viewer_format_entry":
         guard let entry = request.log_entry else {

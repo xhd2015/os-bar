@@ -53,6 +53,17 @@ class SessionStore: ObservableObject {
         }
     }
 
+    func markAllRead() {
+        Task {
+            do {
+                try await client.consumeAll()
+                await refresh()
+            } catch {
+                print("SessionStore: consumeAll failed: \(error)")
+            }
+        }
+    }
+
     var unconsumedCount: Int {
         events.filter { !$0.consumed }.count
     }

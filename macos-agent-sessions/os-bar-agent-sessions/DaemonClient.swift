@@ -107,6 +107,11 @@ final class DaemonClient {
         }
     }
 
+    func consumeAll() async throws {
+        let body = Data("{}".utf8)
+        let (_, _) = try await post(path: "/api/events/consume-all", body: body)
+    }
+
     func appendLog(_ entry: NotifyLogEntry) async throws {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601

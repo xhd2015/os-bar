@@ -179,6 +179,15 @@ func (d *daemon) handleConsume(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
+func (d *daemon) handleConsumeAll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	d.store.markAllConsumed()
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 func (d *daemon) handleIntegrations(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")

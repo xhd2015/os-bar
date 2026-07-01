@@ -73,6 +73,7 @@ func (d *daemon) run() error {
 	mux.HandleFunc("/api/notify", d.handleNotify)
 	mux.HandleFunc("/api/events", d.handleEvents)
 	mux.HandleFunc("/api/events/consume", d.handleConsume)
+	mux.HandleFunc("/api/events/consume-all", d.handleConsumeAll)
 	mux.HandleFunc("/api/integrations", d.handleIntegrations)
 	mux.HandleFunc("/api/integrations/install", d.handleIntegrationsInstall)
 	mux.HandleFunc("/", d.handleNotFound)

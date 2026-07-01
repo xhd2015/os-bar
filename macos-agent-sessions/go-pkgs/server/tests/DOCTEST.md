@@ -62,6 +62,7 @@ server/tests/                                 ROOT: Request{Action, Port, StateD
 │   ├── delete-events/                      LEAF: DELETE /api/events?dir=
 │   ├── missing-dir/                        LEAF: POST {} → 400
 │   ├── wrong-method/                       LEAF: GET /api/notify → 405
+│   ├── consume-all-wrong-method/           LEAF: GET /api/events/consume-all → 405
 │   └── wrong-path/                         LEAF: POST /api/wrong → 404
 │
 ├── store-rules/                              DECISION: concern = session store semantics
@@ -71,6 +72,7 @@ server/tests/                                 ROOT: Request{Action, Port, StateD
 │   ├── dedup-trailing-slash/                 LEAF: dir vs dir/ → count 1, canonical dir
 │   ├── cap-20/                               LEAF: 21 dirs → list len 20
 │   ├── consume-event/                        LEAF: POST /api/events/consume
+│   ├── consume-all-events/                   LEAF: POST /api/events/consume-all → all consumed
 │   └── prune-on-load/                        LEAF: seed 8-day-old event, restart, gone
 │
 └── integrations-api/                         DECISION: concern = integrations REST
@@ -102,14 +104,16 @@ server/tests/                                 ROOT: Request{Action, Port, StateD
 | 6 | `sessions-api/delete-events/` | `DELETE /api/events?dir=` removes matching events |
 | 7 | `sessions-api/missing-dir/` | `POST /api/notify` without `dir` → 400 |
 | 8 | `sessions-api/wrong-method/` | `GET /api/notify` → 405 |
-| 9 | `sessions-api/wrong-path/` | `POST /api/wrong` → 404 |
-| 10 | `store-rules/dedup-bump/` | Re-notify same dir bumps timestamp, count stays 1 |
-| 10b | `store-rules/dedup-trailing-slash/` | Dir with/without trailing slash deduped to one |
-| 11 | `store-rules/cap-20/` | 21 distinct dirs capped to 20 events |
-| 12 | `store-rules/consume-event/` | `POST /api/events/consume` marks `consumed=true` |
-| 13 | `store-rules/prune-on-load/` | 8-day-old seeded event pruned on daemon load |
-| 14 | `integrations-api/list-all-missing/` | All four integrations report `missing` (global) |
-| 15 | `integrations-api/install-grok/` | Install grok via API; status `up_to_date`, files exist |
+| 9 | `sessions-api/consume-all-wrong-method/` | `GET /api/events/consume-all` → 405 |
+| 10 | `sessions-api/wrong-path/` | `POST /api/wrong` → 404 |
+| 11 | `store-rules/dedup-bump/` | Re-notify same dir bumps timestamp, count stays 1 |
+| 11b | `store-rules/dedup-trailing-slash/` | Dir with/without trailing slash deduped to one |
+| 12 | `store-rules/cap-20/` | 21 distinct dirs capped to 20 events |
+| 13 | `store-rules/consume-event/` | `POST /api/events/consume` marks `consumed=true` |
+| 14 | `store-rules/consume-all-events/` | `POST /api/events/consume-all` marks every event `consumed=true`; count preserved |
+| 15 | `store-rules/prune-on-load/` | 8-day-old seeded event pruned on daemon load |
+| 16 | `integrations-api/list-all-missing/` | All four integrations report `missing` (global) |
+| 17 | `integrations-api/install-grok/` | Install grok via API; status `up_to_date`, files exist |
 
 ## How to Run
 

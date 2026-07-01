@@ -620,6 +620,13 @@ private struct MenuBarDropdownContent: View {
                 }
             }
 
+            Button("Mark All Read") {
+                store.markAllRead()
+            }
+            .disabled(store.unconsumedCount == 0)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+
             Divider()
 
             Toggle("Auto Start", isOn: $autoStart)
