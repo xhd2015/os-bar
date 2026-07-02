@@ -4,7 +4,7 @@ go 1.25.10
 
 require (
 	github.com/shirou/gopsutil/v4 v4.25.5
-	github.com/xhd2015/less-flags v0.0.0
+	github.com/xhd2015/less-flags v1.0.0
 )
 
 require (
@@ -17,5 +17,3 @@ require (
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	golang.org/x/sys v0.28.0 // indirect
 )
-
-replace github.com/xhd2015/less-flags => /Users/xhd2015/Projects/xhd2015/less-flags

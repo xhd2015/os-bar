@@ -196,6 +196,9 @@ struct Request: Codable {
     let kool_ipc_handled: Bool?
     let kool_ipc_error: String?
     let kool_json_invalid: Bool?
+    // --- restart daemon test fields ---
+    let daemon_port: Int?
+    let daemon_pid: Int?
 }
 
 struct TestLogEntryInput: Codable {
@@ -1636,6 +1639,14 @@ func runHelper() -> Never {
         }
         response.unconsumed_count = 1 // success indicator
         response.log_entry_json = strNoCmd
+
+    case "restart_daemon_label":
+        let port = request.daemon_port ?? -1
+        let pid = request.daemon_pid ?? -1
+        let portStr = port < 0 ? "-" : String(port)
+        let pidStr = pid < 0 ? "-" : String(pid)
+        response.button_label = "Restart Daemon (Port: \(portStr), PID: \(pidStr))"
+        response.button_enabled = true
 
     default:
         response.error = "unknown action: \(request.action)"

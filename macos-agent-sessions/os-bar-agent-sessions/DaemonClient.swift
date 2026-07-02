@@ -167,6 +167,27 @@ final class DaemonClient {
         }
     }
 
+    func getConfig() async throws -> ConfigResponse {
+        let (data, response) = try await get(path: "/api/config")
+        try ensureOK(response, data: data)
+        return try JSONDecoder().decode(ConfigResponse.self, from: data)
+    }
+
+    func setConfig(openMethod: String) async throws {
+        let body = try JSONEncoder().encode(ConfigSetRequest(open_method: openMethod))
+        let (_, response) = try await post(path: "/api/config", body: body)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            throw DaemonClientError.badStatus((response as? HTTPURLResponse)?.statusCode ?? -1, "")
+        }
+    }
+
+    func openDir(_ dir: String, openMethod: String? = nil) async throws -> OpenDirResponse {
+        let body = try JSONEncoder().encode(OpenDirRequest(dir: dir, open_method: openMethod))
+        let (data, response) = try await post(path: "/api/open-dir", body: body)
+        try ensureOK(response, data: data)
+        return try JSONDecoder().decode(OpenDirResponse.self, from: data)
+    }
+
     private func get(path: String) async throws -> (Data, URLResponse) {
         guard let url = URL(string: baseURL + path) else {
             throw DaemonClientError.unreachable("invalid URL")
@@ -198,4 +219,26 @@ final class DaemonClient {
         }
     }
 
+}
+
+struct ConfigSetRequest: Encodable {
+    let open_method: String
+}
+
+struct ConfigResponse: Decodable {
+    let open_method: String
+
+    enum CodingKeys: String, CodingKey {
+        case open_method = "open_method"
+    }
+}
+
+struct OpenDirRequest: Encodable {
+    let dir: String
+    let open_method: String?
+}
+
+struct OpenDirResponse: Decodable {
+    let ok: Bool
+    let open_method_used: String
 }

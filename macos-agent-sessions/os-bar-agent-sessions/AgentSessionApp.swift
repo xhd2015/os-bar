@@ -62,6 +62,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var cursorPushCount = 0
     private var loadingCursor: NSCursor?
 
+    func daemonInfo() -> (port: Int, pid: Int32) {
+        let port = AgentSessionsDaemonConfig.resolvedPort
+        let pid = daemonProcess.map { $0.processIdentifier } ?? 0
+        let running = daemonProcess?.isRunning ?? false
+        if running && pid > 0 {
+            return (port, pid)
+        }
+        // Even without a tracked Process, if daemon is running the PID can be
+        // read from pid file or just show "unknown" state.
+        return (port, -1)
+    }
+
+    func restartDaemon() {
+        Task { @MainActor in
+            if let proc = daemonProcess, proc.isRunning {
+                proc.terminate()
+                proc.waitUntilExit()
+            }
+            daemonProcess = nil
+            store?.objectWillChange.send()
+            await ensureDaemonRunning()
+            await store?.refresh()
+            store?.objectWillChange.send()
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         DaemonShutdown.terminateOnQuit(
             config: DaemonShutdown.agentSessions,
@@ -213,13 +239,62 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Open session dir: notification clicks try kool IPC first; menu uses `code` only.
+    /// Open session dir: delegates to daemon which reads config and dispatches to vscode/iterm2.
     func openDir(_ dir: String, clickSource: SessionClickSource? = nil) {
-        if clickSource == .notification {
-            openDirViaKoolThenCodeFallback(dir)
-            return
+        pushLoadingCursor()
+        let startTime = Date()
+        let timeoutWork = DispatchWorkItem { [weak self] in
+            self?.popLoadingCursor()
         }
-        launchCodeCLI(dir: dir, clickSource: clickSource, logMeta: nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: timeoutWork)
+        Task { @MainActor [weak self] in
+            defer {
+                timeoutWork.cancel()
+                self?.popLoadingCursor()
+            }
+            do {
+                let resp = try await DaemonClient.shared.openDir(dir)
+                let durationMs = Int(Date().timeIntervalSince(startTime) * 1000)
+                let entry = NotifyLogEntry(
+                    source: "log",
+                    timestamp: Date(),
+                    dir: dir,
+                    event: "command.executed",
+                    pi: nil,
+                    opencode: nil,
+                    command: NotifyLogEntry.CommandLogDetails(
+                        command: "POST /api/open-dir",
+                        exitCode: 0,
+                        stdout: "",
+                        stderr: "",
+                        durationMs: durationMs,
+                        openMethod: resp.open_method_used,
+                        koolAttempted: false,
+                        koolIpcHandled: nil,
+                        fallbackReason: nil
+                    )
+                )
+                try? await DaemonClient.shared.appendLog(entry)
+            } catch {
+                let durationMs = Int(Date().timeIntervalSince(startTime) * 1000)
+                let entry = NotifyLogEntry(
+                    source: "log",
+                    timestamp: Date(),
+                    dir: dir,
+                    event: "command.error",
+                    pi: nil,
+                    opencode: nil,
+                    command: NotifyLogEntry.CommandLogDetails(
+                        command: "POST /api/open-dir",
+                        exitCode: -1,
+                        stdout: "",
+                        stderr: error.localizedDescription,
+                        durationMs: durationMs
+                    )
+                )
+                try? await DaemonClient.shared.appendLog(entry)
+            }
+        }
     }
 
     private func openDirViaKoolThenCodeFallback(_ dir: String) {
@@ -507,7 +582,9 @@ struct AgentSessionApp: App {
                 autoStart: $autoStart,
                 showIntegrationsSettings: showIntegrationsSettings,
                 showLogsWindow: showLogsWindow,
-                openInCode: openInCode
+                openInCode: openInCode,
+                restartDaemon: { appDelegate.restartDaemon() },
+                daemonInfo: { appDelegate.daemonInfo() }
             )
         } label: {
             ZStack {
@@ -590,6 +667,8 @@ private struct MenuBarDropdownContent: View {
     let showIntegrationsSettings: (OpenWindowAction) -> Void
     let showLogsWindow: (OpenWindowAction) -> Void
     let openInCode: (String) -> Void
+    let restartDaemon: () -> Void
+    let daemonInfo: () -> (port: Int, pid: Int32)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -644,6 +723,15 @@ private struct MenuBarDropdownContent: View {
                         autoStart = !enabled
                     }
                 }
+
+            let info = daemonInfo()
+            let portStr = info.port < 0 ? "-" : String(info.port)
+            let pidStr = info.pid < 0 ? "-" : String(info.pid)
+            Button("Restart Daemon (Port: \(portStr), PID: \(pidStr))") {
+                restartDaemon()
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
 
             Divider()
 

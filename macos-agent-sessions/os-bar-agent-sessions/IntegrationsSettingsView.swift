@@ -9,6 +9,10 @@ struct IntegrationsSettingsView: View {
 
             Divider()
 
+            DefaultOpenModeSection(viewModel: viewModel)
+
+            Divider()
+
             Text("Integrations")
                 .font(.headline)
 
@@ -40,6 +44,7 @@ struct IntegrationsSettingsView: View {
                 }
             }
             viewModel.refresh()
+            viewModel.loadOpenModeConfig()
         }
     }
 }
@@ -173,5 +178,33 @@ private struct IntegrationRowView: View {
         case "outdated": return .yellow
         default: return .secondary
         }
+    }
+}
+
+private struct DefaultOpenModeSection: View {
+    @ObservedObject var viewModel: IntegrationsViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Default Open Mode")
+                .font(.headline)
+
+            Text("Choose which app opens when you click a session in the menu bar or a notification:")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Picker("Open with", selection: $viewModel.openMethod) {
+                Text("VSCode").tag("vscode")
+                Text("iTerm2").tag("iterm2")
+            }
+            .pickerStyle(.radioGroup)
+            .accessibilityIdentifier("open-mode-picker")
+            .onChange(of: viewModel.openMethod) { newValue in
+                viewModel.saveOpenModeConfig(method: newValue)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("default-open-mode-section")
     }
 }

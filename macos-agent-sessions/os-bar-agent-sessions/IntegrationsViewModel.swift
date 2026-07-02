@@ -27,6 +27,7 @@ final class IntegrationsViewModel: ObservableObject {
     @Published private(set) var integrations: [IntegrationItem] = []
     @Published private(set) var isInstalling = false
     @Published private(set) var lastError: String?
+    @Published var openMethod: String = "vscode"
 
     private let client = DaemonClient.shared
     private let useGlobalScope: Bool
@@ -48,6 +49,28 @@ final class IntegrationsViewModel: ObservableObject {
                 } catch {
                     try? await Task.sleep(nanoseconds: 50_000_000)
                 }
+            }
+        }
+    }
+
+    func loadOpenModeConfig() {
+        Task {
+            do {
+                let config = try await client.getConfig()
+                openMethod = config.open_method
+            } catch {
+                // Keep default on error
+            }
+        }
+    }
+
+    func saveOpenModeConfig(method: String) {
+        openMethod = method
+        Task {
+            do {
+                try await client.setConfig(openMethod: method)
+            } catch {
+                lastError = error.localizedDescription
             }
         }
     }

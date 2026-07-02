@@ -200,6 +200,109 @@ func (d *daemon) handleIntegrations(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, integrations.IntegrationsResponse{Integrations: entries})
 }
 
+func (d *daemon) handleConfig(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		d.handleConfigGet(w, r)
+	case http.MethodPost:
+		d.handleConfigSet(w, r)
+	default:
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (d *daemon) handleConfigGet(w http.ResponseWriter, r *http.Request) {
+	cfg, err := d.loadConfig()
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, cfg)
+}
+
+func (d *daemon) handleConfigSet(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	var req struct {
+		OpenMethod string `json:"open_method"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if !isValidOpenMethod(req.OpenMethod) {
+		writeJSONError(w, http.StatusBadRequest, "invalid open_method; must be 'vscode' or 'iterm2'")
+		return
+	}
+	if err := d.saveConfig(&Config{OpenMethod: req.OpenMethod}); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (d *daemon) handleOpenDir(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	var req struct {
+		Dir        string `json:"dir"`
+		OpenMethod string `json:"open_method"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if req.Dir == "" {
+		writeJSONError(w, http.StatusBadRequest, "missing dir")
+		return
+	}
+
+	method := req.OpenMethod
+	if method == "" {
+		cfg, cfgErr := d.loadConfig()
+		if cfgErr != nil {
+			writeJSONError(w, http.StatusInternalServerError, cfgErr.Error())
+			return
+		}
+		method = cfg.OpenMethod
+	}
+
+	if !isValidOpenMethod(method) {
+		writeJSONError(w, http.StatusBadRequest, "invalid open_method")
+		return
+	}
+
+	switch method {
+	case openMethodVSCode:
+		if err := openInVSCode(req.Dir); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	case openMethodIterm2:
+		if err := openInIterm2(req.Dir); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"ok":               true,
+		"open_method_used": method,
+	})
+}
+
 func (d *daemon) handleIntegrationsInstall(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
