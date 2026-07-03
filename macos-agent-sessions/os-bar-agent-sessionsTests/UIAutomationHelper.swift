@@ -79,6 +79,9 @@ struct Response: Codable {
     var user_confirmed_window_opened: Bool = false
     var user_confirmed_desktop_ready: Bool = false
     var user_confirmed_correct_window: Bool = false
+    var user_report_window_opened: String = ""
+    var user_report_desktop_ready: String = ""
+    var user_report_correct_window: String = ""
     var human_assisted_passed: Bool = false
 }
 
@@ -1577,62 +1580,158 @@ final class UIAutomationSession {
 }
 
 enum HumanAssistedDialog {
-    /// NSAlert does not appear when the helper is a swiftc CLI subprocess; use osascript instead.
-    private static func escapeAppleScript(_ value: String) -> String {
-        value
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
+    static let installHint = "go install github.com/xhd2015/agent-pro/agents/debug-with-user@latest"
+    private static let customizeCancelLabel = "Cancel"
+
+    enum Answer {
+        case affirmed
+        case denied
+        case custom(report: String)
+        case dismissed
     }
 
-    private static func runAlert(
-        title: String,
-        message: String,
-        buttons: [String],
-        defaultButton: String,
-        cancelButton: String
-    ) -> String? {
-        fputs(">>> [HumanAssisted] Showing dialog: \(title)\n", stderr)
-        fflush(stderr)
+    struct AskOutcome {
+        var available: Bool
+        var dismissed: Bool
+        var via: String
+        var answer: String
+        var affirmed: Bool
+    }
 
-        let buttonSpec = buttons.map { "\"\(escapeAppleScript($0))\"" }.joined(separator: ", ")
-        let script = """
-        display alert "\(escapeAppleScript(title))" message "\(escapeAppleScript(message))" as informational buttons {\(buttonSpec)} default button "\(escapeAppleScript(defaultButton))" cancel button "\(escapeAppleScript(cancelButton))"
-        """
+    static func isAvailable() -> Bool {
         let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        proc.arguments = ["-e", script]
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        proc.arguments = ["sh", "-c", "command -v debug-with-user"]
         let pipe = Pipe()
         proc.standardOutput = pipe
-        proc.standardError = pipe
+        proc.standardError = FileHandle.nullDevice
         do {
             try proc.run()
             proc.waitUntilExit()
         } catch {
-            fputs(">>> [HumanAssisted] osascript failed: \(error)\n", stderr)
+            return false
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let path = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return proc.terminationStatus == 0 && !path.isEmpty
+    }
+
+    private static func runAsk(
+        title: String,
+        message: String,
+        options: [String],
+        affirm: String,
+        cancel: String
+    ) -> AskOutcome? {
+        guard isAvailable() else {
+            fputs(">>> [HumanAssisted] debug-with-user not installed; run: \(installHint)\n", stderr)
             fflush(stderr)
             return nil
         }
 
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let output = String(data: data, encoding: .utf8) ?? ""
-        if proc.terminationStatus != 0 {
-            fputs(">>> [HumanAssisted] dialog dismissed (status=\(proc.terminationStatus)): \(output)\n", stderr)
+        fputs(">>> [HumanAssisted] Showing dialog via debug-with-user: \(title)\n", stderr)
+        fflush(stderr)
+
+        // --cancel applies only to the Customize text-entry step; keep a neutral label.
+        var args = ["ask", "--title", title, "--message", message, "--affirm", affirm, "--cancel", customizeCancelLabel]
+        for option in options {
+            args.append(contentsOf: ["--option", option])
+        }
+        _ = cancel // preset labels are --option only; alert has no cancel-button mapping
+
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        proc.arguments = ["debug-with-user"] + args
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        proc.standardOutput = stdoutPipe
+        proc.standardError = stderrPipe
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+        } catch {
+            fputs(">>> [HumanAssisted] debug-with-user failed: \(error)\n", stderr)
             fflush(stderr)
             return nil
         }
-        for line in output.split(separator: "\n") {
-            let text = String(line)
-            if text.hasPrefix("button returned:") {
-                let button = text.dropFirst("button returned:".count)
-                    .trimmingCharacters(in: .whitespaces)
-                fputs(">>> [HumanAssisted] User chose: \(button)\n", stderr)
-                fflush(stderr)
-                return button
-            }
+
+        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
+        let stderrText = String(data: stderrData, encoding: .utf8) ?? ""
+
+        if proc.terminationStatus == 1 {
+            fputs(">>> [HumanAssisted] dialog dismissed: \(stderrText)\n", stderr)
+            fflush(stderr)
+            return AskOutcome(available: true, dismissed: true, via: "dismissed", answer: "", affirmed: false)
         }
-        fputs(">>> [HumanAssisted] Unexpected osascript output: \(output)\n", stderr)
+        guard proc.terminationStatus == 0 else {
+            fputs(">>> [HumanAssisted] debug-with-user error (status=\(proc.terminationStatus)): \(stderrText)\n", stderr)
+            fflush(stderr)
+            return nil
+        }
+
+        guard let jsonData = stdout.trimmingCharacters(in: .whitespacesAndNewlines).data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+              let via = obj["via"] as? String,
+              let answer = obj["answer"] as? String
+        else {
+            fputs(">>> [HumanAssisted] invalid JSON stdout: \(stdout)\n", stderr)
+            fflush(stderr)
+            return nil
+        }
+
+        let affirmed = (obj["affirmed"] as? Bool) ?? false
+        fputs(">>> [HumanAssisted] via=\(via) answer=\(answer) affirmed=\(affirmed)\n", stderr)
         fflush(stderr)
-        return nil
+        return AskOutcome(available: true, dismissed: false, via: via, answer: answer, affirmed: affirmed)
+    }
+
+    private static func interpret(_ outcome: AskOutcome?) -> Answer? {
+        guard let outcome else {
+            return nil
+        }
+        if outcome.dismissed {
+            return .dismissed
+        }
+        if outcome.via == "free_text" {
+            return .custom(report: outcome.answer)
+        }
+        if outcome.via == "button" {
+            return outcome.affirmed ? .affirmed : .denied
+        }
+        return .denied
+    }
+
+    static func askConfirm(
+        title: String,
+        message: String,
+        yesButton: String,
+        noButton: String
+    ) -> Answer? {
+        interpret(runAsk(
+            title: title,
+            message: message,
+            options: [noButton, yesButton],
+            affirm: yesButton,
+            cancel: noButton
+        ))
+    }
+
+    static func askProceed(
+        title: String,
+        message: String,
+        proceedButton: String = "OK — ready",
+        cancelButton: String = "Cancel test"
+    ) -> Answer? {
+        interpret(runAsk(
+            title: title,
+            message: message,
+            options: [cancelButton, proceedButton],
+            affirm: proceedButton,
+            cancel: cancelButton
+        ))
     }
 
     static func confirmYesNo(
@@ -1641,14 +1740,10 @@ enum HumanAssistedDialog {
         yesButton: String,
         noButton: String
     ) -> Bool {
-        let choice = runAlert(
-            title: title,
-            message: message,
-            buttons: [noButton, yesButton],
-            defaultButton: yesButton,
-            cancelButton: noButton
-        )
-        return choice == yesButton
+        guard case .affirmed = askConfirm(title: title, message: message, yesButton: yesButton, noButton: noButton) else {
+            return false
+        }
+        return true
     }
 
     static func proceedOrCancel(
@@ -1657,14 +1752,15 @@ enum HumanAssistedDialog {
         proceedButton: String = "OK — ready",
         cancelButton: String = "Cancel test"
     ) -> Bool {
-        let choice = runAlert(
+        guard case .affirmed = askProceed(
             title: title,
             message: message,
-            buttons: [cancelButton, proceedButton],
-            defaultButton: proceedButton,
+            proceedButton: proceedButton,
             cancelButton: cancelButton
-        )
-        return choice == proceedButton
+        ) else {
+            return false
+        }
+        return true
     }
 }
 
@@ -1895,6 +1991,11 @@ func runHelper() -> Never {
 
         case "notification_window_focus_manual":
             do {
+                guard HumanAssistedDialog.isAvailable() else {
+                    resp.error = "debug-with-user not installed; run: \(HumanAssistedDialog.installHint)"
+                    break
+                }
+
                 let notifyDir = req.notify_dir ?? workDir
                 let title = req.notification_title ?? "Agent session finished"
                 let logSeconds = req.log_capture_seconds ?? 30
@@ -1909,7 +2010,7 @@ func runHelper() -> Never {
 
                 // Phase 1 — first notification + click
                 try session.postNotifyAndWaitForBanner(dir: notifyDir, phase: 1, resp: &resp)
-                guard HumanAssistedDialog.proceedOrCancel(
+                switch HumanAssistedDialog.askProceed(
                     title: "Round 1 — Click the notification",
                     message: """
                     A notification was sent for:
@@ -1919,10 +2020,23 @@ func runHelper() -> Never {
                     """,
                     proceedButton: "OK — I clicked it",
                     cancelButton: "Cancel test"
-                ) else {
+                ) {
+                case .affirmed:
+                    break
+                case .custom(let report):
+                    resp.error = "user custom report (round 1 notification click): \(report)"
+                    break
+                case .dismissed:
+                    resp.error = "user dismissed dialog before first notification click"
+                    break
+                case .denied:
                     resp.error = "user cancelled before first notification click"
                     break
+                case .none:
+                    resp.error = "debug-with-user failed during round 1 notification click prompt"
+                    break
                 }
+                if !resp.error.isEmpty { break }
                 resp.first_notification_clicked = session.waitForManualNotificationClick(
                     notifyDir: notifyDir,
                     title: title,
@@ -1936,7 +2050,7 @@ func runHelper() -> Never {
                 }
                 usleep(2_000_000)
 
-                resp.user_confirmed_window_opened = HumanAssistedDialog.confirmYesNo(
+                switch HumanAssistedDialog.askConfirm(
                     title: "Step 1 — Did VS Code open?",
                     message: """
                     A notification was sent and you clicked it.
@@ -1948,13 +2062,22 @@ func runHelper() -> Never {
                     """,
                     yesButton: "Yes — window opened",
                     noButton: "No — window did not open"
-                )
-                if !resp.user_confirmed_window_opened {
+                ) {
+                case .affirmed:
+                    resp.user_confirmed_window_opened = true
+                case .custom(let report):
+                    resp.user_report_window_opened = report
+                    resp.error = "user custom report (VS Code opened): \(report)"
+                case .dismissed:
+                    resp.error = "user dismissed dialog at VS Code open confirmation"
+                case .denied:
                     resp.error = "user reported VS Code did not open after first notification click"
-                    break
+                case .none:
+                    resp.error = "debug-with-user failed during VS Code open confirmation"
                 }
+                if !resp.error.isEmpty { break }
 
-                resp.user_confirmed_desktop_ready = HumanAssistedDialog.proceedOrCancel(
+                switch HumanAssistedDialog.askProceed(
                     title: "Step 2 — Move window to another Space",
                     message: """
                     Move the VS Code window for this project to another macOS Space (desktop):
@@ -1966,16 +2089,25 @@ func runHelper() -> Never {
                     """,
                     proceedButton: "OK — ready for round 2",
                     cancelButton: "Cancel test"
-                )
-                if !resp.user_confirmed_desktop_ready {
+                ) {
+                case .affirmed:
+                    resp.user_confirmed_desktop_ready = true
+                case .custom(let report):
+                    resp.user_report_desktop_ready = report
+                    resp.error = "user custom report (desktop ready): \(report)"
+                case .dismissed:
+                    resp.error = "user dismissed dialog before second notification round"
+                case .denied:
                     resp.error = "user cancelled before second notification round"
-                    break
+                case .none:
+                    resp.error = "debug-with-user failed during desktop ready prompt"
                 }
+                if !resp.error.isEmpty { break }
 
                 // Phase 2 — second notification + click (window focus parity)
                 usleep(1_000_000)
                 try session.postNotifyAndWaitForBanner(dir: notifyDir, phase: 2, resp: &resp)
-                guard HumanAssistedDialog.proceedOrCancel(
+                switch HumanAssistedDialog.askProceed(
                     title: "Round 2 — Click the notification again",
                     message: """
                     A second notification was sent for the same folder:
@@ -1985,10 +2117,23 @@ func runHelper() -> Never {
                     """,
                     proceedButton: "OK — I clicked it",
                     cancelButton: "Cancel test"
-                ) else {
+                ) {
+                case .affirmed:
+                    break
+                case .custom(let report):
+                    resp.error = "user custom report (round 2 notification click): \(report)"
+                    break
+                case .dismissed:
+                    resp.error = "user dismissed dialog before second notification click"
+                    break
+                case .denied:
                     resp.error = "user cancelled before second notification click"
                     break
+                case .none:
+                    resp.error = "debug-with-user failed during round 2 notification click prompt"
+                    break
                 }
+                if !resp.error.isEmpty { break }
                 resp.second_notification_clicked = session.waitForManualNotificationClick(
                     notifyDir: notifyDir,
                     title: title,
@@ -2002,7 +2147,7 @@ func runHelper() -> Never {
                 }
                 usleep(2_000_000)
 
-                resp.user_confirmed_correct_window = HumanAssistedDialog.confirmYesNo(
+                switch HumanAssistedDialog.askConfirm(
                     title: "Step 3 — Correct window focused?",
                     message: """
                     You clicked the second notification for the same project folder:
@@ -2012,11 +2157,20 @@ func runHelper() -> Never {
                     """,
                     yesButton: "Yes — correct window",
                     noButton: "No — wrong window / stayed put"
-                )
-                if !resp.user_confirmed_correct_window {
+                ) {
+                case .affirmed:
+                    resp.user_confirmed_correct_window = true
+                case .custom(let report):
+                    resp.user_report_correct_window = report
+                    resp.error = "user custom report (correct window focused): \(report)"
+                case .dismissed:
+                    resp.error = "user dismissed dialog at correct window confirmation"
+                case .denied:
                     resp.error = "user reported notification click did not focus the correct VS Code window"
-                    break
+                case .none:
+                    resp.error = "debug-with-user failed during correct window confirmation"
                 }
+                if !resp.error.isEmpty { break }
 
                 resp.notification_clicked = true
                 resp.click_ok = true

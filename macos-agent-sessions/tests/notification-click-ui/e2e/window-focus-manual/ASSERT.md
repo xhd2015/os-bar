@@ -18,6 +18,7 @@ explanation: Human-assisted two-round test with modals and two notification clic
 ## Errors
 
 - Any modal "No" or "Cancel" fails the test with a descriptive `resp.Error`.
+- **Customize** free-text reports set `resp.UserReport*` fields and fail with `user custom report (...)` in `resp.Error`.
 - Click timeout per round fails before modals complete.
 
 ```go

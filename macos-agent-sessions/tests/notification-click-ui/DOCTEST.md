@@ -105,6 +105,9 @@ type Response struct {
 	UserConfirmedWindowOpened    bool   `json:"user_confirmed_window_opened"`
 	UserConfirmedDesktopReady    bool   `json:"user_confirmed_desktop_ready"`
 	UserConfirmedCorrectWindow   bool   `json:"user_confirmed_correct_window"`
+	UserReportWindowOpened       string `json:"user_report_window_opened,omitempty"`
+	UserReportDesktopReady       string `json:"user_report_desktop_ready,omitempty"`
+	UserReportCorrectWindow      string `json:"user_report_correct_window,omitempty"`
 	HumanAssistedPassed          bool   `json:"human_assisted_passed"`
 }
 
